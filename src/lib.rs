@@ -1,23 +1,24 @@
+#![deny(clippy::all)]
+#![deny(clippy::pedantic)]
+#![allow(clippy::missing_errors_doc)]
+
 mod error;
 mod key;
 mod label;
 mod value;
 
 pub use crate::error::Error;
-use crate::key::KeySerializer;
-use crate::label::LabelSerializer;
-use crate::value::ValueSerializer;
+use crate::key::{Serializer as KeySerializer};
+use crate::label::{Serializer as LabelSerializer};
+use crate::value::{Serializer as ValueSerializer};
+
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::str::FromStr;
-use std::sync::RwLock;
-
-use serde::ser::{Impossible, SerializeMap, SerializeStruct};
-use serde::{Serialize, Serializer as SerdeSerializer};
-
 use std::fmt::Display;
 
-use lazy_static::lazy_static;
+use serde::{Serialize, ser::{Impossible, SerializeMap, SerializeStruct}};
+use snafu::ResultExt;
 
 pub enum TypeHint {
     Counter = 1337,
@@ -43,16 +44,11 @@ impl FromStr for TypeHint {
 
     fn from_str(v: &str) -> std::result::Result<Self, Self::Err> {
         match v {
-            // TODO: move these to metered
-            "HitCount" => Ok(TypeHint::Counter),
-
             "counter" => Ok(TypeHint::Counter),
             "guage" => Ok(TypeHint::Guage),
             "histogram" => Ok(TypeHint::Histogram),
             "summary" => Ok(TypeHint::Summary),
-
-            _ => panic!("{:?}", v),
-            // _ => Err(Error::UnknownHint),
+            _ => Err(Error::UnknownHint),
         }
     }
 }
@@ -67,29 +63,28 @@ impl Display for TypeHint {
     }
 }
 
-pub enum MapValueType {}
-
-struct Serializer<'a, T: std::io::Write> {
+struct Serializer<'a, T: std::io::Write, S: std::hash::BuildHasher> {
     namespace: Option<&'a str>,
     path: Vec<String>,
-    global_labels: HashMap<&'a str, &'a str>,
+    global_labels: HashMap<&'a str, &'a str, S>,
     output: T,
 }
 
 /// Outputs a `metered::MetricRegistry` in Prometheus' simple text-based exposition
 /// format.
-pub fn to_string<T>(
+pub fn to_string<T, S>(
     value: &T,
     namespace: Option<&str>,
-    global_labels: Option<HashMap<&str, &str>>,
+    global_labels: HashMap<&str, &str, S>,
 ) -> Result<String, Error>
 where
     T: ?Sized + Serialize,
+    S: std::hash::BuildHasher,
 {
     let mut serializer = Serializer {
-        namespace: namespace,
+        namespace,
         path: vec![],
-        global_labels: global_labels.unwrap_or_default(),
+        global_labels,
         // sizeof(value) * 4 to get the size of the utf8-repr of the values then multiply by 12 to
         // get a decent estimate of the size of this output including keys.
         output: Vec::with_capacity(std::mem::size_of_val(value) * 4 * 12),
@@ -98,8 +93,8 @@ where
     Ok(String::from_utf8(serializer.output).unwrap())
 }
 
-impl<T: std::io::Write> Serializer<'_, T> {
-    fn write_key<'a>(&mut self, hint: Option<TypeHint>, key: Option<&str>) -> Result<usize, Error> {
+impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
+    fn write_key(&mut self, hint: Option<TypeHint>, key: Option<&str>) -> Result<usize, Error> {
         let path = self.path.last().filter(|x| !x.is_empty());
         let path_before = if self.path.len() > 1 {
             self.path.get(self.path.len() - 2)
@@ -118,11 +113,11 @@ impl<T: std::io::Write> Serializer<'_, T> {
         };
         let key = match self.namespace {
             Some(namespace) => format!("{}_{}", namespace, key),
-            None => key.to_string(),
+            None => key,
         };
 
         if let Some(typ) = hint {
-            write!(self.output, "# TYPE {} {}\n", key, typ)?;
+            writeln!(self.output, "# TYPE {} {}", key, typ)?;
         }
 
         key.serialize(&mut KeySerializer {
@@ -135,10 +130,10 @@ impl<T: std::io::Write> Serializer<'_, T> {
     fn write_labels(&mut self, paths_to_remove: usize, extras: Option<HashMap<&str, &str>>) -> Result<(), Error> {
         let mut map = extras.unwrap_or_default();
 
-        let path = if self.path.len() > 0 {
-            Some(self.path[..self.path.len() - paths_to_remove].join("/"))
-        } else {
+        let path = if self.path.is_empty() {
             None
+        } else {
+            Some(self.path[..self.path.len() - paths_to_remove].join("/"))
         };
         if let Some(path) = path.as_ref() {
             map.insert("path", path);
@@ -148,7 +143,7 @@ impl<T: std::io::Write> Serializer<'_, T> {
             map.insert(key, value);
         }
 
-        if map.len() > 0 {
+        if !map.is_empty() {
             map.serialize(&mut LabelSerializer {
                 output: &mut self.output,
                 remaining: 0,
@@ -169,7 +164,7 @@ impl<T: std::io::Write> Serializer<'_, T> {
     }
 }
 
-impl<W: std::io::Write> serde::Serializer for &mut Serializer<'_, W> {
+impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Impossible<Self::Ok, Self::Error>;
@@ -393,14 +388,13 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<'_, W> {
 /// Maps are most of the time histograms so we handle them a little bit differently,
 /// instead of using the key directly from the map, we modify them a little bit to
 /// make them a little bit more Prometheus-like using the `MapKeySerializer`.
-impl<W: std::io::Write> SerializeMap for &mut Serializer<'_, W> {
+impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeMap for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
 
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), Self::Error> {
         let key_bytes = key.serialize(MapKeySerializer)?;
-        let key = std::str::from_utf8(key_bytes.as_bytes()).unwrap();
-        self.path.push(key.to_owned());
+        self.path.push(std::str::from_utf8(key_bytes.as_bytes()).context(error::MetricNameMustBeUtf8)?.to_owned());
 
         Ok(())
     }
@@ -416,7 +410,7 @@ impl<W: std::io::Write> SerializeMap for &mut Serializer<'_, W> {
     }
 }
 
-impl<W: std::io::Write> SerializeStruct for &mut Serializer<'_, W> {
+impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeStruct for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
 
@@ -666,16 +660,15 @@ mod tests {
                 baz: &baz.metrics,
             },
             None,
-            None,
+            HashMap::new(),
         )
         .unwrap();
         let split: Vec<&str> = ret.split("\n").collect();
 
-        assert_eq!(split[0], "# TYPE hit_count counter");
-        assert_eq!(split[1], "hit_count{path = \"biz/bizle\"} 0");
+        assert_eq!(split[0], "hit_count{path = \"biz/bizle\"} 0");
 
         if !split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0")
-            || !split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0")
+            || !split.contains(&"throughput{path = \"biz/bizle\", quantile = \"0.95\"} 0")
         {
             assert!(split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0"));
         }
@@ -701,16 +694,15 @@ mod tests {
                 },
             },
             Some("global"),
-            Some(labels),
+            labels,
         )
         .unwrap();
         let split: Vec<&str> = ret.split("\n").collect();
 
-        assert_eq!(split[0], "# TYPE global_hit_count counter");
-        if split[1] != "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"
-            && split[1] != "global_hit_count{path = \"wrapper/biz/bizle\", service = \"my_cool_service\"} 0"
+        if split[0] != "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"
+            && split[0] != "global_hit_count{path = \"wrapper/biz/bizle\", service = \"my_cool_service\"} 0"
         {
-            assert_eq!(split[1], "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0");
+            assert_eq!(split[0], "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0");
         }
         if !split.contains(&"global_response_time_count{path = \"wrapper/baz/bazle\", service = \"my_cool_service\"} 0")
             && !split.contains(&"global_response_time_count{service = \"my_cool_service\", path = \"wrapper/baz/bazle\"} 0")

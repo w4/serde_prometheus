@@ -2,18 +2,10 @@ use crate::error::Error;
 use serde::ser::{Impossible, Serialize};
 use std::fmt::Display;
 
-fn serialize_value<T: serde::Serialize>(value: T) -> Result<String, Error> {
-    let mut serializer = ValueSerializer {
-        output: Vec::with_capacity(20),
-    };
-    value.serialize(&mut serializer)?;
-    Ok(String::from_utf8(serializer.output).unwrap())
-}
-
-pub struct ValueSerializer<T: std::io::Write> {
+pub struct Serializer<T: std::io::Write> {
     pub output: T,
 }
-impl<T: std::io::Write> ValueSerializer<T> {
+impl<T: std::io::Write> Serializer<T> {
     fn write_int<N: itoa::Integer>(&mut self, num: N) -> Result<(), Error> {
         itoa::write(&mut self.output, num)?;
         Ok(())
@@ -24,7 +16,7 @@ impl<T: std::io::Write> ValueSerializer<T> {
         Ok(())
     }
 }
-impl<W: std::io::Write> serde::Serializer for &mut ValueSerializer<W> {
+impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Impossible<Self::Ok, Self::Error>;

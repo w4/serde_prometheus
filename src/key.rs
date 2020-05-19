@@ -5,18 +5,10 @@ use serde::ser::{Impossible, Serialize};
 use snafu::ResultExt;
 use std::fmt::Display;
 
-pub fn serialize_key<T: serde::Serialize>(value: T) -> Result<String, Error> {
-    let mut serializer = KeySerializer {
-        output: Vec::with_capacity(32),
-    };
-    value.serialize(&mut serializer)?;
-    Ok(String::from_utf8(serializer.output).unwrap())
-}
-
-pub struct KeySerializer<T: std::io::Write> {
+pub struct Serializer<T: std::io::Write> {
     pub output: T,
 }
-impl<W: std::io::Write> serde::Serializer for &mut KeySerializer<W> {
+impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Impossible<Self::Ok, Self::Error>;

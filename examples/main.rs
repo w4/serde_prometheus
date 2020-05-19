@@ -56,10 +56,10 @@ async fn main() {
                 let mut globals = std::collections::HashMap::new();
                 globals.insert("service", "serde_prometheus_example");
 
-                let serialized = metered_serializer_prometheus::to_string(&ServiceMetricRegistry {
+                let serialized = serde_prometheus::to_string(&ServiceMetricRegistry {
                     biz: &biz.metrics,
                     baz: &baz.metrics,
-                }, Some("example"), Some(globals))
+                }, Some("example"), globals)
                 .unwrap();
 
                 let response = format!(

@@ -1,24 +1,14 @@
 use crate::error::Error;
-use crate::key::serialize_key;
-use crate::key::KeySerializer;
+use crate::key::{Serializer as KeySerializer};
 use serde::ser::{Impossible, Serialize};
 use serde::ser::{SerializeMap, SerializeStruct};
 use std::fmt::Display;
 
-pub fn serialize_label<T: serde::Serialize>(value: T) -> Result<String, Error> {
-    let mut serializer = LabelSerializer {
-        output: Vec::with_capacity(32),
-        remaining: 0,
-    };
-    value.serialize(&mut serializer)?;
-    Ok(String::from_utf8(serializer.output).unwrap())
-}
-
-pub struct LabelSerializer<W: std::io::Write> {
+pub struct Serializer<W: std::io::Write> {
     pub output: W,
     pub remaining: usize,
 }
-impl<W: std::io::Write> LabelSerializer<W> {
+impl<W: std::io::Write> Serializer<W> {
     fn write_kv_pair<K: ?Sized + Serialize, V: ?Sized + Serialize>(
         &mut self,
         key: &K,
@@ -36,14 +26,14 @@ impl<W: std::io::Write> LabelSerializer<W> {
 
             if self.remaining > 0 {
                 self.output.write_all(b", ")?;
-                self.remaining = self.remaining - 1;
+                self.remaining -= 1;
             }
         }
 
         Ok(())
     }
 }
-impl<W: std::io::Write> serde::Serializer for &mut LabelSerializer<W> {
+impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
     type Ok = ();
     type Error = Error;
 
@@ -224,7 +214,7 @@ impl<W: std::io::Write> serde::Serializer for &mut LabelSerializer<W> {
         Err(Error::LabelsMustBeMap)
     }
 }
-impl<W: std::io::Write> SerializeStruct for &mut LabelSerializer<W> {
+impl<W: std::io::Write> SerializeStruct for &mut Serializer<W> {
     type Ok = ();
     type Error = Error;
 
@@ -242,7 +232,7 @@ impl<W: std::io::Write> SerializeStruct for &mut LabelSerializer<W> {
         Ok(())
     }
 }
-impl<W: std::io::Write> SerializeMap for &mut LabelSerializer<W> {
+impl<W: std::io::Write> SerializeMap for &mut Serializer<W> {
     type Ok = ();
     type Error = Error;
 
@@ -459,8 +449,17 @@ impl serde::Serializer for LabelValueSerializer {
 
 #[cfg(test)]
 mod tests {
-    use crate::label::serialize_label;
     use std::collections::HashMap;
+    use crate::label::Serializer;
+
+    pub fn serialize_label<T: serde::Serialize>(value: T) -> Result<String, crate::error::Error> {
+        let mut serializer = Serializer {
+            remaining: 0,
+            output: Vec::with_capacity(128),
+        };
+        value.serialize(&mut serializer)?;
+        Ok(String::from_utf8(serializer.output).unwrap())
+    }
 
     #[test]
     pub fn single_struct() {
