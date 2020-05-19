@@ -17,7 +17,7 @@ use std::convert::TryFrom;
 use std::str::FromStr;
 use std::fmt::Display;
 
-use serde::{Serialize, ser::{Impossible, SerializeMap, SerializeStruct}};
+use serde::{Serialize, ser::{Impossible, SerializeMap, SerializeStruct, SerializeSeq}};
 use snafu::ResultExt;
 
 pub enum TypeHint {
@@ -167,7 +167,7 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
 impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
-    type SerializeSeq = Impossible<Self::Ok, Self::Error>;
+    type SerializeSeq = Self;
     type SerializeTuple = Impossible<Self::Ok, Self::Error>;
     type SerializeTupleStruct = Impossible<Self::Ok, Self::Error>;
     type SerializeTupleVariant = Impossible<Self::Ok, Self::Error>;
@@ -272,7 +272,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Ok(self)
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
@@ -419,13 +419,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeStruct for &mut Seri
         key: &'static str,
         value: &T,
     ) -> Result<(), Self::Error> {
-        if key != "" {
-            self.path.push(key.to_owned());
-        }
+        self.path.push(key.to_owned());
         value.serialize(&mut **self)?;
-        if key != "" {
-            self.path.pop();
-        }
+        self.path.pop();
         Ok(())
     }
 
@@ -434,10 +430,24 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeStruct for &mut Seri
     }
 }
 
-/// A basic serializer for map keys which ensures the key must be stringy and maps
-/// them to a more Prometheus-like structure if they look like histograms (which
-/// they should be if they're coming from a safe implementation of
-/// `metered::MetricRegistry`).
+impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeSeq for &mut Serializer<'_, W, S> {
+    type Ok = ();
+    type Error = Error;
+
+    fn serialize_element<T: ?Sized + Serialize>(
+        &mut self,
+        value: &T
+    ) -> Result<(), Self::Error> {
+        value.serialize(&mut **self)?;
+        Ok(())
+    }
+
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(())
+    }
+}
+
 struct MapKeySerializer;
 impl serde::Serializer for MapKeySerializer {
     type Ok = String;
@@ -668,7 +678,7 @@ mod tests {
         assert_eq!(split[0], "hit_count{path = \"biz/bizle\"} 0");
 
         if !split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0")
-            || !split.contains(&"throughput{path = \"biz/bizle\", quantile = \"0.95\"} 0")
+            && !split.contains(&"throughput{path = \"biz/bizle\", quantile = \"0.95\"} 0")
         {
             assert!(split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0"));
         }
