@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use tokio::io::AsyncWriteExt;
 
-#[derive(serde::Serialize, metered::MetricRegistry)]
+#[derive(serde::Serialize)]
 pub struct ServiceMetricRegistry<'a> {
     biz: &'a BizMetrics,
     baz: &'a BazMetrics,

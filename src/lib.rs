@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::str::FromStr;
 use std::fmt::Display;
+use std::borrow::Cow;
 
 use serde::{Serialize, ser::{Impossible, SerializeMap, SerializeStruct, SerializeSeq}};
 use snafu::ResultExt;
@@ -94,22 +95,14 @@ where
 }
 
 impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
-    fn write_key(&mut self, hint: Option<TypeHint>, key: Option<&str>) -> Result<usize, Error> {
-        let path = self.path.last().filter(|x| !x.is_empty());
-        let path_before = if self.path.len() > 1 {
-            self.path.get(self.path.len() - 2)
-        } else {
-            None
-        };
+    fn write_key<'a>(&mut self, hint: Option<TypeHint>, key: Option<Cow<'a, str>>) -> Result<(), Error> {
+        let path = self.path.last();
 
-        let (paths_to_remove, key) = match (path_before, path, key) {
-            (_,                 Some(path), Some(key)) => (1, format!("{}_{}", path, key)),
-            (Some(path_before), None,       Some(key)) => (2, format!("{}_{}", path_before, key)),
-            (_,                 _,          Some(key)) => (1, key.to_string()),
-            (Some(path_before), None,       _) => (2, path_before.to_string()),
-            //(Some(path_before), Some(path), _) => (2, format!("{}_{}", path_before, path)),
-            (_,                 Some(path), _) => (1, path.to_string()),
-            (_,                 _,          _) => panic!("that's not going to work"),
+        let key = match (path, key) {
+            (Some(path), Some(key)) => format!("{}_{}", path, key.as_ref()),
+            (_,          Some(key)) => key.into_owned(),
+            (Some(path), _) => path.to_string(),
+            (_,          _) => panic!("that's not going to work"),
         };
         let key = match self.namespace {
             Some(namespace) => format!("{}_{}", namespace, key),
@@ -124,16 +117,16 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
             output: &mut self.output,
         })?;
 
-        Ok(paths_to_remove)
+        Ok(())
     }
 
-    fn write_labels(&mut self, paths_to_remove: usize, extras: Option<HashMap<&str, &str>>) -> Result<(), Error> {
+    fn write_labels(&mut self, extras: Option<HashMap<&str, &str>>) -> Result<(), Error> {
         let mut map = extras.unwrap_or_default();
 
         let path = if self.path.is_empty() {
             None
         } else {
-            Some(self.path[..self.path.len() - paths_to_remove].join("/"))
+            Some(self.path[..self.path.len() - 1].join("/"))
         };
         if let Some(path) = path.as_ref() {
             map.insert("path", path);
@@ -181,8 +174,8 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
 
     // Unit struct means a named value containing no data.
     fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
-        let paths_to_remove = self.write_key(None, Some(name))?;
-        self.write_labels(paths_to_remove, None)?;
+        self.write_key(None, Some(Cow::Borrowed(name)))?;
+        self.write_labels(None)?;
         self.write_value(0)
     }
 
@@ -194,9 +187,57 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
     where
         T: Serialize,
     {
-        let paths_to_remove = self.write_key(TypeHint::from_str(type_name).ok(), None)?;
-        self.write_labels(paths_to_remove, None)?;
+        let (modifiers, labels) = if type_name.contains('|') {
+            let mut split = type_name.splitn(2, '|');
+            (split.next().filter(|v| !v.is_empty()), split.next().filter(|v| !v.is_empty()))
+        } else {
+            (None, Some(type_name).filter(|v| !v.is_empty() && v.contains('=')))
+        };
+
+        let original = self.path.clone();
+        let mut key = Vec::new(); // VecDeque for push_front?
+
+        if let Some(modifiers) = modifiers {
+            for modifier in modifiers.chars() {
+                match modifier {
+                    // include the last appended path, ignoring excluded ones, in the key instead
+                    // of the 'path' label
+                    '<' => key.insert(0, self.path.pop().expect("no path to pop!!")),
+                    // exclude a path from both the name and the 'path' label
+                    '!' => { self.path.pop(); },
+                    _ => return Err(Error::InvalidModifier)
+                }
+            }
+        }
+
+        let key = if key.is_empty() {
+            None
+        } else {
+            Some(Cow::Owned(key.join("_")))
+        };
+
+        self.write_key(None, key)?;
+        self.write_labels(if let Some(label) = labels {
+            let mut labels = HashMap::new();
+            let pairs = label
+                .split(',')
+                .map(|pair| pair.splitn(2, '='))
+                .map(|mut v| (v.next(), v.next()));
+
+            for (key, value) in pairs {
+                labels.insert(
+                    key.ok_or(Error::InvalidLabel)?,
+                    value.ok_or(Error::InvalidLabel)?,
+                );
+            }
+            Some(labels)
+        } else {
+            None
+        })?;
+
         self.write_value(value)?;
+
+        self.path = original;
 
         Ok(())
     }
@@ -213,7 +254,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
     {
         let name = match name {
             "" => None,
-            x => Some(x),
+            x => Some(Cow::Borrowed(x)),
         };
 
         let hint = match variant_index {
@@ -221,9 +262,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
             x => Some(TypeHint::try_from(x)?),
         };
 
-        let paths_to_remove = self.write_key(hint, name)?;
+        self.write_key(hint, name)?;
 
-        self.write_labels(paths_to_remove, if variant.contains('=') {
+        self.write_labels(if variant.contains('=') {
             let mut labels = HashMap::new();
             let pairs = variant
                 .split(',')

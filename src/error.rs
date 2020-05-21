@@ -39,6 +39,9 @@ pub enum Error {
     UnknownHint,
     /// Labels, when being passed to the serializer, must be in the format of `key1=val1,key2=val2`
     InvalidLabel,
+    /// A key modifier was passed that isn't recognised. See `crate::Serializer::serialize_newtype_struct`
+    /// for recognised modifiers.
+    InvalidModifier,
 }
 
 impl From<std::io::Error> for Error {
