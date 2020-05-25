@@ -1,8 +1,11 @@
 [package]
 name = "serde_prometheus"
 version = "0.1.0"
+description = "serde-based serializer for prometheus' text-based exposition format"
 authors = ["Jordan Doyle <jordand@doyle.la>"]
 edition = "2018"
+license = "WTFPL OR 0BSD"
+repository = "https://github.com/w4/serde_prometheus"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
