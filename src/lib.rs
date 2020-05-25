@@ -1,3 +1,201 @@
+//! A [serde][] implementation for Prometheus' text-based exposition format.
+//!
+//! Currently this library only supports serialisation to Prometheus' format
+//! for exporting metrics but this might be extended to deserialisation
+//! later on down the line.
+//!
+//! serde_prometheus will work with most metric libraries' structs out of the
+//! box, however some work may be required to get them into a format expected
+//! by Prometheus.
+//!
+//! Metric names exposed in the format are derived from the value's name in the
+//! struct or map that contains it.
+//!
+//! ## Basic Usage
+//!
+//! ```rust
+//! # use std::collections::HashMap;
+//! # use serde::Serialize;
+//! # fn main() -> Result<(), serde_prometheus::Error> {
+//! #[derive(Serialize)]
+//! struct HitCount(u64);
+//!
+//! #[derive(Serialize)]
+//! struct MetricRegistry {
+//!     my_struct: MyStructMetrics
+//! }
+//!
+//! #[derive(Serialize)]
+//! struct MyStructMetrics {
+//!     hit_count: HitCount
+//! }
+//!
+//! let metrics = MetricRegistry {
+//!     my_struct: MyStructMetrics {
+//!         hit_count: HitCount(30)
+//!     }
+//! };
+//!
+//! assert_eq!(
+//!    serde_prometheus::to_string(&metrics, None, HashMap::new())?,
+//!    "hit_count{path = \"my_struct\"} 30\n"
+//! );
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Global Labels
+//!
+//! Global labels can be added to all metrics exported by serde_prometheus using
+//! the `HashMap` passed into `serde_prometheus::to_string` for example:
+//!
+//! ```rust
+//! # use std::collections::HashMap;
+//! # use serde::Serialize;
+//! # fn main() -> Result<(), serde_prometheus::Error> {
+//! # #[derive(Serialize)]
+//! # struct HitCount(u64);
+//! #
+//! # #[derive(Serialize)]   
+//! # struct MetricRegistry {
+//! #     my_struct: MyStructMetrics
+//! # }
+//! #
+//! # #[derive(Serialize)]    
+//! # struct MyStructMetrics {
+//! #     hit_count: HitCount 
+//! # }
+//! # 
+//! # let metrics = MetricRegistry {  
+//! #     my_struct: MyStructMetrics {
+//! #         hit_count: HitCount(30) 
+//! #     }
+//! # };
+//! let mut labels = HashMap::new();
+//! labels.insert("my_key", "my_value");
+//!
+//! let serialised = serde_prometheus::to_string(&metrics, None, labels)?;
+//! # // deal with HashMap reordering vals
+//! # if serialised.contains("{path") {
+//! #     assert_eq!(serialised, "hit_count{path = \"my_struct\", my_key = \"my_value\"} 30\n");
+//! # } else {
+//! assert_eq!(serialised, "hit_count{my_key = \"my_value\", path = \"my_struct\"} 30\n");
+//! # }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Global Prefix
+//!
+//! And a global prefix can be added to all metrics:
+//!
+//! ```rust
+//! # use std::collections::HashMap;
+//! # use serde::Serialize;
+//! # fn main() -> Result<(), serde_prometheus::Error> {
+//! # #[derive(Serialize)]
+//! # struct HitCount(u64);
+//! #
+//! # #[derive(Serialize)]   
+//! # struct MetricRegistry {
+//! #     my_struct: MyStructMetrics
+//! # }
+//! #  
+//! # #[derive(Serialize)]    
+//! # struct MyStructMetrics {
+//! #     hit_count: HitCount 
+//! # }
+//! #  
+//! # let metrics = MetricRegistry {  
+//! #     my_struct: MyStructMetrics {
+//! #         hit_count: HitCount(30) 
+//! #     }
+//! # };
+//! assert_eq!(
+//!    serde_prometheus::to_string(&metrics, Some("my_prefix"), HashMap::new())?,
+//!    "my_prefix_hit_count{path = \"my_struct\"} 30\n"
+//! );
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Metadata/key manipulation
+//!
+//! Serde's newtype implementation is (ab)used by serde_prometheus to add metadata
+//! to serialised fields without breaking backwards compatibility with serde_json
+//! and such.
+//!
+//! For example, [serde_prometheus support has been added to metered-rs][mrsimpl]'s
+//! histograms whilst still keeping the same JSON schema, it does this by using
+//! a call to `serialize_newtype_struct` in a struct's Serialize trait impl, the
+//! format for the type names is as follows:
+//!
+//! ```txt
+//! modifiers|key=value,key2=value2
+//! ```
+//!
+//! The modifiers that can be used are:
+//!
+//! | Modifier     | Description |
+//! | ------------ | ----------- |
+//! | <            | Pops a value off of the `path` stack and prepends it to the name |
+//! | !            | Pops the last value off of the `path` stack and drops it |
+//!
+//! These can be combined and are read from left to right, for example:
+//!
+//! ```rust
+//! # use std::collections::HashMap;
+//! # use serde::{Serializer, Serialize};
+//! # fn main() -> Result<(), serde_prometheus::Error> {
+//! # #[derive(Serialize)]
+//! # struct MetricRegistry {
+//! #     my_struct: MyStructMetrics
+//! # }
+//! #
+//! # #[derive(Serialize)]    
+//! # struct MyStructMetrics {
+//! #     my_method: MyMethodMetrics 
+//! # }
+//! #
+//! # #[derive(Serialize)]
+//! # struct MyMethodMetrics {
+//! #     hit_count: HitCount
+//! # }
+//! #
+//! struct HitCount(u64);
+//! impl Serialize for HitCount {
+//!     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+//!         // ignore the current key, and include the one before
+//!         serializer.serialize_newtype_struct("!<|my_key=my_value", &self.0)
+//!     }
+//! } 
+//!
+//! let metrics = MetricRegistry {
+//!     my_struct: MyStructMetrics {
+//!         my_method: MyMethodMetrics {
+//!             hit_count: HitCount(30)
+//!         }
+//!     }
+//! };
+//!
+//! let serialised = serde_prometheus::to_string(&metrics, None, HashMap::new())?;
+//! # // deal with HashMap reordering vals
+//! # if serialised.contains("{path=") {
+//! #     assert_eq!(serialised, "my_struct_my_method{path = \"\", my_key = \"my_value\"}");
+//! # } else {
+//! // would be `hit_count{my_key = "my_value", path = "my_struct/my_method"}` without the Serialize impl
+//! assert_eq!(
+//!    serde_prometheus::to_string(&metrics, None, HashMap::new())?,
+//!    "my_struct_my_method{my_key = \"my_value\", path = \"\"} 30\n"
+//! );
+//! # }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! [serde]: https://github.com/serde-rs/serde/
+//! [mrsimpl]: https://github.com/magnet/metered-rs/commit/b6b61979a2727e3be58737015ba11eb63309ed6b
+
 #![deny(clippy::all)]
 #![deny(clippy::pedantic)]
 #![allow(clippy::missing_errors_doc)]
