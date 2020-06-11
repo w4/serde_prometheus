@@ -18,6 +18,6 @@ lazy_static = "1.4"
 snafu = "0.6"
 
 [dev-dependencies]
-metered = { path = "../metered-rs/metered" }
+metered = "0.4"
 tokio = { version = "0.2", features = ["full"] }
 rand = "0.7"

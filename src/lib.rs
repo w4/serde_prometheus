@@ -234,7 +234,7 @@ impl TryFrom<u32> for TypeHint {
             x if x == TypeHint::Guage as u32 => Ok(TypeHint::Guage),
             x if x == TypeHint::Histogram as u32 => Ok(TypeHint::Histogram),
             x if x == TypeHint::Summary as u32 => Ok(TypeHint::Summary),
-            _ => Err(Error::UnsupportedValue),
+            _ => Err(Error::UnsupportedValue { kind: "TypeHint".to_string() }),
         }
     }
 }
@@ -300,7 +300,7 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
             (Some(path), Some(key)) => format!("{}_{}", path, key.as_ref()),
             (_,          Some(key)) => key.into_owned(),
             (Some(path), _) => path.to_string(),
-            (_,          _) => panic!("that's not going to work"),
+            (_,          _) => return Err(error::Error::NoMetricName),
         };
         let key = match self.namespace {
             Some(namespace) => format!("{}_{}", namespace, key),
@@ -497,17 +497,100 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
         Ok(self)
     }
 
+    fn serialize_i8(self, value: i8) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_i16(self, value: i16) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_i32(self, value: i32) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_u16(self, value: u16) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_u32(self, value: u32) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_f32(self, value: f32) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_f64(self, value: f64) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None, None)?;
+        self.write_labels(None)?;
+        self.write_value(value)?;
+        Ok(())
+    }
+
+    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        // noop
+        Ok(())
+    }
+
+    fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
+    where
+        T: Serialize,
+    {
+        value.serialize(&mut *self)?;
+        Ok(())
+    }
+
     ///////////////////////////////////////////////////////////
     // Unsupported key/value serialisers
     ///////////////////////////////////////////////////////////
 
     fn serialize_unit_variant(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: format!("Unit Variant ({}::{})", name, variant) })
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -515,112 +598,62 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: "Tuple".to_string() })
     }
 
     fn serialize_tuple_struct(
         self,
-        _name: &'static str,
+        name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: format!("Tuple Struct ({})", name) })
     }
 
     fn serialize_tuple_variant(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: format!("Tuple Variant ({}::{})", name, variant) })
     }
 
     fn serialize_struct_variant(
         self,
-        _name: &'static str,
+        name: &'static str,
         _variant_index: u32,
-        _variant: &'static str,
+        variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: format!("Struct Variant ({}::{})", name, variant) })
     }
 
     fn collect_str<T: ?Sized>(self, _value: &T) -> Result<Self::Ok, Self::Error>
     where
         T: Display,
     {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: "collect_str".to_string() })
     }
 
     fn serialize_str(self, _v: &str) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: "str".to_string() })
     }
 
     fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: "char".to_string() })
     }
 
     fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: "bytes".to_string() })
     }
 
     fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: "bool".to_string() })
     }
 
-    fn serialize_i8(self, _v: i8) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_i16(self, _v: i16) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_i32(self, _v: i32) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_i64(self, _v: i64) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_u32(self, _v: u32) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_u64(self, _v: u64) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_f32(self, _v: f32) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_f64(self, _v: f64) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
-    }
-
-    fn serialize_some<T: ?Sized>(self, _value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize,
-    {
-        Err(Error::UnsupportedValue)
-    }
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue)
+        Err(Error::UnsupportedValue { kind: "()".to_string() })
     }
 }
 

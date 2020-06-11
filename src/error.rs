@@ -6,13 +6,18 @@ pub enum Error {
     /// An error thrown by the `serde::Serialize` trait on a type. This error is
     /// thrown from outside of this crate, most likely from within serde for a std
     /// library type.
+    #[snafu(display("error while serializing value: {}", context))]
     Serde {
-        detail: String,
+        context: String,
     },
     /// A stdlib io error occurred whilst writing the serialized data out.
+    #[snafu(display("std io error whilst writing serialized data: {}", context))]
     Io {
         context: std::io::Error,
     },
+    /// The value attempting to be serialised does not belong to any metric, try
+    /// serialising this value as a struct member or in a map.
+    NoMetricName,
     /// Thrown when serializing in a map that doesn't contain string keys.
     MapKeyMustBeString,
     /// Caused by attempting to serialize labels from a format other than a map.
@@ -25,14 +30,20 @@ pub enum Error {
     /// Thrown when the main serializer encounters a value that isn't supported,
     /// value can only contain maps that contain numbers, or other structs that
     /// when followed, only lead to numbers.
-    UnsupportedValue,
+    #[snafu(display("unsupported value encountered while serializing: {}", kind))]
+    UnsupportedValue {
+        kind: String
+    },
     /// UTF-8 error when attempting to serialize strings passed in by client.
     MetricNameMustBeUtf8 {
         source: std::str::Utf8Error,
     },
     /// Thrown when attempting to serialize a metric name which doesn't conform to the format
     /// defined [here](https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels).
-    MetricNameNotInFormat,
+    #[snafu(display("unsupported metric name encountered while serializing: {}", kind))]
+    MetricNameNotInFormat {
+        kind: String
+    },
     /// Thrown when attempting to serialize a metric value that isn't a stdlib numeric type.
     MetricValueMustBeNumeric,
     /// Attempted to 'hint' that a value is a type that isn't defined in `crate::TypeHint`
@@ -56,7 +67,7 @@ impl serde::ser::Error for Error {
         T: Display,
     {
         Error::Serde {
-            detail: msg.to_string(),
+            context: msg.to_string(),
         }
     }
 }
