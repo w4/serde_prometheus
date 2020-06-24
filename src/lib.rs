@@ -134,6 +134,17 @@
 //! modifiers|key=value,key2=value2
 //! ```
 //!
+//! Modifiers can also be used in labels using a `==` like so:
+//!
+//! ```txt
+//! |key3==modifiers
+//! ```
+//!
+//! Label modifiers are applied from left-most metadata field to right, please keep in mind
+//! however that whilst the `path` stack is shared between label values, it is reset for
+//! the key, so any values used in labels that aren't wanted in the key (and by extension
+//! the path) must be ignored there.
+//!
 //! The modifiers that can be used are:
 //!
 //! | Modifier     | Description |
@@ -165,8 +176,9 @@
 //! struct HitCount(u64);
 //! impl Serialize for HitCount {
 //!     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-//!         // ignore the current key, and include the one before
-//!         serializer.serialize_newtype_struct("!<|my_key=my_value", &self.0)
+//!         // metric name: include our key (hit_count), ignore the second (my_method), and include the third (my_struct)
+//!         // metric meta: for the method_name, ignore our key (hit_count), include the second (my_method)
+//!         serializer.serialize_newtype_struct("<!<|my_key=my_value,method_name==!<", &self.0)
 //!     }
 //! } 
 //!
@@ -179,15 +191,18 @@
 //! };
 //!
 //! let serialised = serde_prometheus::to_string(&metrics, None, HashMap::new())?;
-//! # // deal with HashMap reordering vals
-//! # if serialised.contains("{path=") {
-//! #     assert_eq!(serialised, "my_struct_my_method{path = \"\", my_key = \"my_value\"}");
-//! # } else {
-//! // would be `hit_count{my_key = "my_value", path = "my_struct/my_method"}` without the Serialize impl
+//! # // handle hashmap label reordering
+//! # if serialised.contains("{my_key") {
 //! assert_eq!(
-//!    serde_prometheus::to_string(&metrics, None, HashMap::new())?,
-//!    "my_struct_my_method{my_key = \"my_value\", path = \"\"} 30\n"
+//!    serialised,
+//!    // would be `hit_count{path = "my_struct/my_method"}` without the Serialize impl
+//!    "my_struct_hit_count{my_key = \"my_value\", method_name = \"my_method\"} 30\n"
 //! );
+//! # } else {
+//! # assert_eq!(
+//! #   serialised,
+//! #   "my_struct_hit_count{method_name = \"my_method\", my_key = \"my_value\"} 30\n"
+//! # );
 //! # }
 //! # Ok(())
 //! # }
@@ -318,7 +333,7 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
         Ok(())
     }
 
-    fn write_labels(&mut self, extras: Option<HashMap<&str, &str>>) -> Result<(), Error> {
+    fn write_labels<'a>(&mut self, extras: Option<HashMap<&str, Cow<'a, str>>>) -> Result<(), Error> {
         let mut map = extras.unwrap_or_default();
 
         let path = if self.path.is_empty() {
@@ -327,11 +342,11 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
             Some(self.path[..self.path.len() - 1].join("/"))
         };
         if let Some(path) = path.as_ref() {
-            map.insert("path", path);
+            map.insert("path", Cow::Borrowed(path));
         }
 
         for (key, value) in &self.global_labels {
-            map.insert(key, value);
+            map.insert(key, Cow::Borrowed(value));
         }
 
         if !map.is_empty() {
@@ -352,6 +367,31 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
         self.output.write_all(b"\n")?;
 
         Ok(())
+    }
+
+    fn map_modifiers(&mut self, modifiers: &str) -> Result<Option<Vec<String>>, Error> {
+        if modifiers.is_empty() {
+            return Ok(None);
+        }
+
+        let mut key = Vec::new(); // VecDeque for push_front?
+
+        for modifier in modifiers.chars() {
+            match modifier {
+                // include the last appended path, ignoring excluded ones, in the key instead
+                // of the 'path' label
+                '<' => key.insert(0, self.path.pop().expect("no path to pop!!")),
+                // exclude a path from both the name and the 'path' label
+                '!' => { self.path.pop(); },
+                _ => return Err(Error::InvalidModifier)
+            }
+        }
+
+        if key.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(key))
+        }
     }
 }
 
@@ -393,29 +433,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
         };
 
         let original = self.path.clone();
-        let mut key = Vec::new(); // VecDeque for push_front?
 
-        if let Some(modifiers) = modifiers {
-            for modifier in modifiers.chars() {
-                match modifier {
-                    // include the last appended path, ignoring excluded ones, in the key instead
-                    // of the 'path' label
-                    '<' => key.insert(0, self.path.pop().expect("no path to pop!!")),
-                    // exclude a path from both the name and the 'path' label
-                    '!' => { self.path.pop(); },
-                    _ => return Err(Error::InvalidModifier)
-                }
-            }
-        }
-
-        let key = if key.is_empty() {
-            None
-        } else {
-            Some(Cow::Owned(key.join("_")))
-        };
-
-        self.write_key(None, key)?;
-        self.write_labels(if let Some(label) = labels {
+        // run the label manipulation first so key manipulation applies to the path
+        let label = if let Some(label) = labels {
             let mut labels = HashMap::new();
             let pairs = label
                 .split(',')
@@ -423,15 +443,36 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
                 .map(|mut v| (v.next(), v.next()));
 
             for (key, value) in pairs {
+                let value = value.ok_or(Error::InvalidLabel)?;
+
+                // `=` is a magic char to indicate that a label value uses modifiers to get its value
+                let value = if value.starts_with('=') {
+                    Cow::Owned(self.map_modifiers(&value[1..])?.map(|v| v.join("_")).unwrap_or_default())
+                } else {
+                    Cow::Borrowed(value)
+                };
+
                 labels.insert(
                     key.ok_or(Error::InvalidLabel)?,
-                    value.ok_or(Error::InvalidLabel)?,
+                    value,
                 );
             }
             Some(labels)
         } else {
             None
-        })?;
+        };
+
+        // reset the path stack for key manipulation
+        self.path = original.clone();
+
+        let key = match modifiers.and_then(|v| self.map_modifiers(v).transpose()) {
+            Some(v) => Some(Cow::Owned(v?.join("_"))),
+            _ => None
+        };
+
+        self.write_key(None, key)?;
+
+        self.write_labels(label)?;
 
         self.write_value(value)?;
 
@@ -472,7 +513,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
             for (key, value) in pairs {
                 labels.insert(
                     key.ok_or(Error::InvalidLabel)?,
-                    value.ok_or(Error::InvalidLabel)?,
+                    Cow::Borrowed(value.ok_or(Error::InvalidLabel)?),
                 );
             }
             Some(labels)
@@ -986,10 +1027,10 @@ mod tests {
         {
             assert_eq!(split[0], "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0");
         }
-        if !split.contains(&"global_response_time_count{path = \"wrapper/baz/bazle\", service = \"my_cool_service\"} 0")
-            && !split.contains(&"global_response_time_count{service = \"my_cool_service\", path = \"wrapper/baz/bazle\"} 0")
+        if !split.contains(&"global_response_time_samples{path = \"wrapper/baz/bazle\", service = \"my_cool_service\"} 0")
+            && !split.contains(&"global_response_time_samples{service = \"my_cool_service\", path = \"wrapper/baz/bazle\"} 0")
         {
-            assert!(split.contains(&"global_response_time_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"));
+            assert!(split.contains(&"global_response_time_samples{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"));
         }
     }
 }
