@@ -131,7 +131,7 @@
 //! format for the type names is as follows:
 //!
 //! ```txt
-//! modifiers|key=value,key2=value2
+//! keymodifiers|key=value,key2=value2
 //! ```
 //!
 //! Modifiers can also be used in labels using a `==` like so:
@@ -140,10 +140,8 @@
 //! |key3==modifiers
 //! ```
 //!
-//! Label modifiers are applied from left-most metadata field to right, please keep in mind
-//! however that whilst the `path` stack is shared between label values, it is reset for
-//! the key, so any values used in labels that aren't wanted in the key (and by extension
-//! the path) must be ignored there.
+//! The `path` stack is reset for each label value, however after applying the key
+//! modifiers, it is retained when writing the `path` label itself.
 //!
 //! The modifiers that can be used are:
 //!
@@ -456,14 +454,14 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
                     key.ok_or(Error::InvalidLabel)?,
                     value,
                 );
+
+                // reset the path stack for the next set of modifiers
+                self.path = original.clone();
             }
             Some(labels)
         } else {
             None
         };
-
-        // reset the path stack for key manipulation
-        self.path = original.clone();
 
         let key = match modifiers.and_then(|v| self.map_modifiers(v).transpose()) {
             Some(v) => Some(Cow::Owned(v?.join("_"))),
