@@ -280,7 +280,7 @@ impl Display for TypeHint {
     }
 }
 
-struct Serializer<'a, T: std::io::Write, S: std::hash::BuildHasher + Clone> {
+struct Serializer<'a, T: std::io::Write, S: std::hash::BuildHasher> {
     namespace: Option<&'a str>,
     path: Vec<String>,
     global_labels: HashMap<&'a str, &'a str, S>,
@@ -298,7 +298,7 @@ pub fn to_string<T, S>(
 ) -> Result<String, Error>
 where
     T: ?Sized + Serialize,
-    S: std::hash::BuildHasher + Clone,
+    S: std::hash::BuildHasher,
 {
     let mut serializer = Serializer {
         namespace,
@@ -319,7 +319,7 @@ where
     Ok(String::from_utf8(serializer.output).unwrap())
 }
 
-impl<T: std::io::Write, S: std::hash::BuildHasher + Clone> Serializer<'_, T, S> {
+impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
     fn write_key(&mut self, hint: Option<TypeHint>) -> Result<(), Error> {
         let path = self.path.last();
         let key = self.current_key_prefix.join("_");
@@ -408,9 +408,7 @@ impl<T: std::io::Write, S: std::hash::BuildHasher + Clone> Serializer<'_, T, S> 
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer
-    for &mut Serializer<'_, W, S>
-{
+impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Self;
@@ -711,9 +709,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer
 /// Maps are most of the time histograms so we handle them a little bit differently,
 /// instead of using the key directly from the map, we modify them a little bit to
 /// make them a little bit more Prometheus-like using the `MapKeySerializer`.
-impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeMap
-    for &mut Serializer<'_, W, S>
-{
+impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeMap for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
 
@@ -739,9 +735,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeMap
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeStruct
-    for &mut Serializer<'_, W, S>
-{
+impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeStruct for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
 
@@ -761,9 +755,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeStruct
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeSeq
-    for &mut Serializer<'_, W, S>
-{
+impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeSeq for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
 
