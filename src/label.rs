@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::key::{Serializer as KeySerializer};
+use crate::key::Serializer as KeySerializer;
 use serde::ser::{Impossible, Serialize};
 use serde::ser::{SerializeMap, SerializeStruct};
 use std::fmt::Display;
@@ -449,8 +449,8 @@ impl serde::Serializer for LabelValueSerializer {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use crate::label::Serializer;
+    use std::collections::HashMap;
 
     pub fn serialize_label<T: serde::Serialize>(value: T) -> Result<String, crate::error::Error> {
         let mut serializer = Serializer {

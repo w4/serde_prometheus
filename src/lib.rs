@@ -63,12 +63,12 @@
 //! #
 //! # #[derive(Serialize)]    
 //! # struct MyStructMetrics {
-//! #     hit_count: HitCount 
+//! #     hit_count: HitCount
 //! # }
-//! # 
+//! #
 //! # let metrics = MetricRegistry {  
 //! #     my_struct: MyStructMetrics {
-//! #         hit_count: HitCount(30) 
+//! #         hit_count: HitCount(30)
 //! #     }
 //! # };
 //! let mut labels = HashMap::new();
@@ -103,12 +103,12 @@
 //! #  
 //! # #[derive(Serialize)]    
 //! # struct MyStructMetrics {
-//! #     hit_count: HitCount 
+//! #     hit_count: HitCount
 //! # }
 //! #  
 //! # let metrics = MetricRegistry {  
 //! #     my_struct: MyStructMetrics {
-//! #         hit_count: HitCount(30) 
+//! #         hit_count: HitCount(30)
 //! #     }
 //! # };
 //! assert_eq!(
@@ -163,7 +163,7 @@
 //! #
 //! # #[derive(Serialize)]    
 //! # struct MyStructMetrics {
-//! #     my_method: MyMethodMetrics 
+//! #     my_method: MyMethodMetrics
 //! # }
 //! #
 //! # #[derive(Serialize)]
@@ -178,7 +178,7 @@
 //!         // metric meta: for the method_name, ignore our key (hit_count), include the second (my_method)
 //!         serializer.serialize_newtype_struct("<!<|my_key=my_value,method_name==!<", &self.0)
 //!     }
-//! } 
+//! }
 //!
 //! let metrics = MetricRegistry {
 //!     my_struct: MyStructMetrics {
@@ -219,17 +219,20 @@ mod label;
 mod value;
 
 pub use crate::error::Error;
-use crate::key::{Serializer as KeySerializer};
-use crate::label::{Serializer as LabelSerializer};
-use crate::value::{Serializer as ValueSerializer};
+use crate::key::Serializer as KeySerializer;
+use crate::label::Serializer as LabelSerializer;
+use crate::value::Serializer as ValueSerializer;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::str::FromStr;
 use std::fmt::Display;
-use std::borrow::Cow;
+use std::str::FromStr;
 
-use serde::{Serialize, ser::{Impossible, SerializeMap, SerializeStruct, SerializeSeq}};
+use serde::{
+    ser::{Impossible, SerializeMap, SerializeSeq, SerializeStruct},
+    Serialize,
+};
 use snafu::ResultExt;
 
 pub enum TypeHint {
@@ -247,7 +250,9 @@ impl TryFrom<u32> for TypeHint {
             x if x == TypeHint::Guage as u32 => Ok(TypeHint::Guage),
             x if x == TypeHint::Histogram as u32 => Ok(TypeHint::Histogram),
             x if x == TypeHint::Summary as u32 => Ok(TypeHint::Summary),
-            _ => Err(Error::UnsupportedValue { kind: "TypeHint".to_string() }),
+            _ => Err(Error::UnsupportedValue {
+                kind: "TypeHint".to_string(),
+            }),
         }
     }
 }
@@ -317,11 +322,11 @@ impl<T: std::io::Write, S: std::hash::BuildHasher + Clone> Serializer<'_, T, S> 
 
         let mut key = match path {
             Some(path) if key != "" => format!("{}_{}", path, key),
-            _          if key != "" => key,
+            _ if key != "" => key,
             Some(path) => path.to_string(),
             _ => return Err(error::Error::NoMetricName),
         };
-        
+
         if let Some(namespace) = self.namespace {
             key = format!("{}_{}", namespace, key);
         }
@@ -392,8 +397,10 @@ impl<T: std::io::Write, S: std::hash::BuildHasher + Clone> Serializer<'_, T, S> 
                 // of the 'path' label
                 '<' => key.insert(0, self.path.pop().expect("no path to pop!!")),
                 // exclude a path from both the name and the 'path' label
-                '!' => { self.path.pop(); },
-                _ => return Err(Error::InvalidModifier)
+                '!' => {
+                    self.path.pop();
+                }
+                _ => return Err(Error::InvalidModifier),
             }
         }
 
@@ -405,7 +412,9 @@ impl<T: std::io::Write, S: std::hash::BuildHasher + Clone> Serializer<'_, T, S> 
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer
+    for &mut Serializer<'_, W, S>
+{
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Self;
@@ -437,9 +446,15 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for
     {
         let (modifiers, labels) = if type_name.contains('|') {
             let mut split = type_name.splitn(2, '|');
-            (split.next().filter(|v| !v.is_empty()), split.next().filter(|v| !v.is_empty()))
+            (
+                split.next().filter(|v| !v.is_empty()),
+                split.next().filter(|v| !v.is_empty()),
+            )
         } else {
-            (None, Some(type_name).filter(|v| !v.is_empty() && v.contains('=')))
+            (
+                None,
+                Some(type_name).filter(|v| !v.is_empty() && v.contains('=')),
+            )
         };
 
         let original_path = self.path.clone();
@@ -458,15 +473,17 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for
 
                 // `=` is a magic char to indicate that a label value uses modifiers to get its value
                 let value = if value.starts_with('=') {
-                    Cow::Owned(self.map_modifiers(&value[1..])?.map(|v| v.join("_")).unwrap_or_default())
+                    Cow::Owned(
+                        self.map_modifiers(&value[1..])?
+                            .map(|v| v.join("_"))
+                            .unwrap_or_default(),
+                    )
                 } else {
                     Cow::Borrowed(value)
                 };
 
-                self.current_labels.insert(
-                    key.ok_or(Error::InvalidLabel)?,
-                    value,
-                );
+                self.current_labels
+                    .insert(key.ok_or(Error::InvalidLabel)?, value);
 
                 // reset the path stack for the next set of modifiers
                 self.path = original_path.clone();
@@ -606,7 +623,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue { kind: format!("Unit Variant ({}::{})", name, variant) })
+        Err(Error::UnsupportedValue {
+            kind: format!("Unit Variant ({}::{})", name, variant),
+        })
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
@@ -614,7 +633,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        Err(Error::UnsupportedValue { kind: "Tuple".to_string() })
+        Err(Error::UnsupportedValue {
+            kind: "Tuple".to_string(),
+        })
     }
 
     fn serialize_tuple_struct(
@@ -622,7 +643,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for
         name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        Err(Error::UnsupportedValue { kind: format!("Tuple Struct ({})", name) })
+        Err(Error::UnsupportedValue {
+            kind: format!("Tuple Struct ({})", name),
+        })
     }
 
     fn serialize_tuple_variant(
@@ -632,7 +655,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        Err(Error::UnsupportedValue { kind: format!("Tuple Variant ({}::{})", name, variant) })
+        Err(Error::UnsupportedValue {
+            kind: format!("Tuple Variant ({}::{})", name, variant),
+        })
     }
 
     fn serialize_struct_variant(
@@ -642,47 +667,67 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        Err(Error::UnsupportedValue { kind: format!("Struct Variant ({}::{})", name, variant) })
+        Err(Error::UnsupportedValue {
+            kind: format!("Struct Variant ({}::{})", name, variant),
+        })
     }
 
     fn collect_str<T: ?Sized>(self, _value: &T) -> Result<Self::Ok, Self::Error>
     where
         T: Display,
     {
-        Err(Error::UnsupportedValue { kind: "collect_str".to_string() })
+        Err(Error::UnsupportedValue {
+            kind: "collect_str".to_string(),
+        })
     }
 
     fn serialize_str(self, _v: &str) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue { kind: "str".to_string() })
+        Err(Error::UnsupportedValue {
+            kind: "str".to_string(),
+        })
     }
 
     fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue { kind: "char".to_string() })
+        Err(Error::UnsupportedValue {
+            kind: "char".to_string(),
+        })
     }
 
     fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue { kind: "bytes".to_string() })
+        Err(Error::UnsupportedValue {
+            kind: "bytes".to_string(),
+        })
     }
 
     fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue { kind: "bool".to_string() })
+        Err(Error::UnsupportedValue {
+            kind: "bool".to_string(),
+        })
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue { kind: "()".to_string() })
+        Err(Error::UnsupportedValue {
+            kind: "()".to_string(),
+        })
     }
 }
 
 /// Maps are most of the time histograms so we handle them a little bit differently,
 /// instead of using the key directly from the map, we modify them a little bit to
 /// make them a little bit more Prometheus-like using the `MapKeySerializer`.
-impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeMap for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeMap
+    for &mut Serializer<'_, W, S>
+{
     type Ok = ();
     type Error = Error;
 
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), Self::Error> {
         let key_bytes = key.serialize(MapKeySerializer)?;
-        self.path.push(std::str::from_utf8(key_bytes.as_bytes()).context(error::MetricNameMustBeUtf8)?.to_owned());
+        self.path.push(
+            std::str::from_utf8(key_bytes.as_bytes())
+                .context(error::MetricNameMustBeUtf8)?
+                .to_owned(),
+        );
 
         Ok(())
     }
@@ -698,7 +743,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeMap for &mut
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeStruct for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeStruct
+    for &mut Serializer<'_, W, S>
+{
     type Ok = ();
     type Error = Error;
 
@@ -718,18 +765,16 @@ impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeStruct for &
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeSeq for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeSeq
+    for &mut Serializer<'_, W, S>
+{
     type Ok = ();
     type Error = Error;
 
-    fn serialize_element<T: ?Sized + Serialize>(
-        &mut self,
-        value: &T
-    ) -> Result<(), Self::Error> {
+    fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
         value.serialize(&mut **self)?;
         Ok(())
     }
-
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
         Ok(())
@@ -997,10 +1042,15 @@ mod tests {
         .unwrap();
         let split: Vec<&str> = ret.split("\n").collect();
 
-        if split[0] != "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"
-            && split[0] != "global_hit_count{path = \"wrapper/biz/bizle\", service = \"my_cool_service\"} 0"
+        if split[0]
+            != "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"
+            && split[0]
+                != "global_hit_count{path = \"wrapper/biz/bizle\", service = \"my_cool_service\"} 0"
         {
-            assert_eq!(split[0], "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0");
+            assert_eq!(
+                split[0],
+                "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"
+            );
         }
         if !split.contains(&"global_response_time_samples{path = \"wrapper/baz/bazle\", service = \"my_cool_service\"} 0")
             && !split.contains(&"global_response_time_samples{service = \"my_cool_service\", path = \"wrapper/baz/bazle\"} 0")

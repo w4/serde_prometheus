@@ -107,11 +107,15 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
     ///////////////////////////////////////////////////////////
 
     fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: format!("Unit Struct ({})", name) })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: format!("Unit Struct ({})", name),
+        })
     }
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: format!("map (len: {:?})", len) })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: format!("map (len: {:?})", len),
+        })
     }
 
     fn serialize_struct(
@@ -119,19 +123,27 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
         name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: format!("Struct ({})", name) })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: format!("Struct ({})", name),
+        })
     }
 
     fn serialize_str(self, _v: &str) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: "str".to_string() })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: "str".to_string(),
+        })
     }
 
     fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: "char".to_string() })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: "char".to_string(),
+        })
     }
 
     fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: "bytes".to_string() })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: "bytes".to_string(),
+        })
     }
 
     fn serialize_unit_variant(
@@ -140,7 +152,9 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
         _variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: format!("Unit Variant ({}::{})", name, variant) })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: format!("Unit Variant ({}::{})", name, variant),
+        })
     }
 
     fn serialize_newtype_variant<T: ?Sized>(
@@ -153,15 +167,21 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
     where
         T: Serialize,
     {
-        Err(Error::MetricValueMustBeNumeric { kind: format!("Newtype Variant ({}::{})", name, variant) })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: format!("Newtype Variant ({}::{})", name, variant),
+        })
     }
 
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: "seq".to_string() })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: "seq".to_string(),
+        })
     }
 
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: "tuple".to_string() })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: "tuple".to_string(),
+        })
     }
 
     fn serialize_tuple_struct(
@@ -169,7 +189,9 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
         name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: format!("Tuple Struct ({})", name) })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: format!("Tuple Struct ({})", name),
+        })
     }
 
     fn serialize_tuple_variant(
@@ -179,7 +201,9 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: format!("Tuple Variant ({}::{})", name, variant) })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: format!("Tuple Variant ({}::{})", name, variant),
+        })
     }
 
     fn serialize_struct_variant(
@@ -189,13 +213,17 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
         variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        Err(Error::MetricValueMustBeNumeric { kind: format!("Struct Variant ({}::{})", name, variant) })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: format!("Struct Variant ({}::{})", name, variant),
+        })
     }
 
     fn collect_str<T: ?Sized>(self, _value: &T) -> Result<Self::Ok, Self::Error>
     where
         T: Display,
     {
-        Err(Error::MetricValueMustBeNumeric { kind: "collect str".to_string() })
+        Err(Error::MetricValueMustBeNumeric {
+            kind: "collect str".to_string(),
+        })
     }
 }
