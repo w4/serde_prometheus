@@ -275,10 +275,12 @@ impl Display for TypeHint {
     }
 }
 
-struct Serializer<'a, T: std::io::Write, S: std::hash::BuildHasher> {
+struct Serializer<'a, T: std::io::Write, S: std::hash::BuildHasher + Clone> {
     namespace: Option<&'a str>,
     path: Vec<String>,
     global_labels: HashMap<&'a str, &'a str, S>,
+    current_labels: HashMap<&'a str, Cow<'a, str>>,
+    current_key_prefix: Vec<String>,
     output: T,
 }
 
@@ -291,34 +293,38 @@ pub fn to_string<T, S>(
 ) -> Result<String, Error>
 where
     T: ?Sized + Serialize,
-    S: std::hash::BuildHasher,
+    S: std::hash::BuildHasher + Clone,
 {
     let mut serializer = Serializer {
         namespace,
         path: vec![],
         global_labels,
+        current_labels: HashMap::new(),
+        current_key_prefix: Vec::new(),
         // sizeof(value) * 4 to get the size of the utf8-repr of the values then multiply by 12 to
         // get a decent estimate of the size of this output including keys.
         output: Vec::with_capacity(std::mem::size_of_val(value) * 4 * 12),
     };
+    serializer.reset_labels();
     value.serialize(&mut serializer)?;
     Ok(String::from_utf8(serializer.output).unwrap())
 }
 
-impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
-    fn write_key<'a>(&mut self, hint: Option<TypeHint>, key: Option<Cow<'a, str>>) -> Result<(), Error> {
+impl<T: std::io::Write, S: std::hash::BuildHasher + Clone> Serializer<'_, T, S> {
+    fn write_key<'a>(&mut self, hint: Option<TypeHint>) -> Result<(), Error> {
         let path = self.path.last();
+        let key = self.current_key_prefix.join("_");
 
-        let key = match (path, key) {
-            (Some(path), Some(key)) => format!("{}_{}", path, key.as_ref()),
-            (_,          Some(key)) => key.into_owned(),
-            (Some(path), _) => path.to_string(),
-            (_,          _) => return Err(error::Error::NoMetricName),
+        let mut key = match path {
+            Some(path) if key != "" => format!("{}_{}", path, key),
+            _          if key != "" => key,
+            Some(path) => path.to_string(),
+            _ => return Err(error::Error::NoMetricName),
         };
-        let key = match self.namespace {
-            Some(namespace) => format!("{}_{}", namespace, key),
-            None => key,
-        };
+        
+        if let Some(namespace) = self.namespace {
+            key = format!("{}_{}", namespace, key);
+        }
 
         if let Some(typ) = hint {
             writeln!(self.output, "# TYPE {} {}", key, typ)?;
@@ -331,8 +337,16 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
         Ok(())
     }
 
-    fn write_labels<'a>(&mut self, extras: Option<HashMap<&str, Cow<'a, str>>>) -> Result<(), Error> {
-        let mut map = extras.unwrap_or_default();
+    fn reset_labels(&mut self) {
+        self.current_labels = HashMap::new();
+
+        for (key, value) in &self.global_labels {
+            self.current_labels.insert(key, Cow::Borrowed(value));
+        }
+    }
+
+    fn write_labels<'a>(&mut self) -> Result<(), Error> {
+        let mut map = self.current_labels.clone();
 
         let path = if self.path.is_empty() {
             None
@@ -340,11 +354,9 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
             Some(self.path[..self.path.len() - 1].join("/"))
         };
         if let Some(path) = path.as_ref() {
-            map.insert("path", Cow::Borrowed(path));
-        }
-
-        for (key, value) in &self.global_labels {
-            map.insert(key, Cow::Borrowed(value));
+            if path != "" {
+                map.insert("path", Cow::Borrowed(path));
+            }
         }
 
         if !map.is_empty() {
@@ -393,7 +405,7 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> serde::Serializer for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Self;
@@ -409,9 +421,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
     ///////////////////////////////////////////////////////////
 
     // Unit struct means a named value containing no data.
-    fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, Some(Cow::Borrowed(name)))?;
-        self.write_labels(None)?;
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(0)
     }
 
@@ -430,11 +442,12 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
             (None, Some(type_name).filter(|v| !v.is_empty() && v.contains('=')))
         };
 
-        let original = self.path.clone();
+        let original_path = self.path.clone();
+        let original_key_prefix = self.current_key_prefix.clone();
+        let original_labels = self.current_labels.clone();
 
         // run the label manipulation first so key manipulation applies to the path
-        let label = if let Some(label) = labels {
-            let mut labels = HashMap::new();
+        if let Some(label) = labels {
             let pairs = label
                 .split(',')
                 .map(|pair| pair.splitn(2, '='))
@@ -450,78 +463,42 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
                     Cow::Borrowed(value)
                 };
 
-                labels.insert(
+                self.current_labels.insert(
                     key.ok_or(Error::InvalidLabel)?,
                     value,
                 );
 
                 // reset the path stack for the next set of modifiers
-                self.path = original.clone();
+                self.path = original_path.clone();
             }
-            Some(labels)
-        } else {
-            None
+        }
+
+        if let Some(keys) = modifiers.and_then(|v| self.map_modifiers(v).transpose()) {
+            for key in keys? {
+                self.current_key_prefix.push(key);
+            }
         };
 
-        let key = match modifiers.and_then(|v| self.map_modifiers(v).transpose()) {
-            Some(v) => Some(Cow::Owned(v?.join("_"))),
-            _ => None
-        };
+        value.serialize(&mut *self)?;
 
-        self.write_key(None, key)?;
-
-        self.write_labels(label)?;
-
-        self.write_value(value)?;
-
-        self.path = original;
+        self.path = original_path;
+        self.current_key_prefix = original_key_prefix;
+        self.current_labels = original_labels;
 
         Ok(())
     }
 
     fn serialize_newtype_variant<T: ?Sized>(
         self,
-        name: &'static str,
-        variant_index: u32,
-        variant: &'static str,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
         value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: Serialize,
     {
-        let name = match name {
-            "" => None,
-            x => Some(Cow::Borrowed(x)),
-        };
-
-        let hint = match variant_index {
-            0 => None,
-            x => Some(TypeHint::try_from(x)?),
-        };
-
-        self.write_key(hint, name)?;
-
-        self.write_labels(if variant.contains('=') {
-            let mut labels = HashMap::new();
-            let pairs = variant
-                .split(',')
-                .map(|pair| pair.splitn(2, '='))
-                .map(|mut v| (v.next(), v.next()));
-
-            for (key, value) in pairs {
-                labels.insert(
-                    key.ok_or(Error::InvalidLabel)?,
-                    Cow::Borrowed(value.ok_or(Error::InvalidLabel)?),
-                );
-            }
-            Some(labels)
-        } else {
-            None
-        })?;
-
-        self.write_value(value)?;
-
-        Ok(())
+        value.serialize(&mut *self)
     }
 
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
@@ -537,71 +514,71 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
     }
 
     fn serialize_i8(self, value: i8) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_i16(self, value: i16) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_i32(self, value: i32) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_u16(self, value: u16) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_u32(self, value: u32) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_f32(self, value: f32) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
 
     fn serialize_f64(self, value: f64) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None, None)?;
-        self.write_labels(None)?;
+        self.write_key(None)?;
+        self.write_labels()?;
         self.write_value(value)?;
         Ok(())
     }
@@ -699,7 +676,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
 /// Maps are most of the time histograms so we handle them a little bit differently,
 /// instead of using the key directly from the map, we modify them a little bit to
 /// make them a little bit more Prometheus-like using the `MapKeySerializer`.
-impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeMap for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeMap for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
 
@@ -721,7 +698,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeMap for &mut Seriali
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeStruct for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeStruct for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
 
@@ -741,7 +718,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeStruct for &mut Seri
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeSeq for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write, S: std::hash::BuildHasher + Clone> SerializeSeq for &mut Serializer<'_, W, S> {
     type Ok = ();
     type Error = Error;
 

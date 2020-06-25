@@ -45,7 +45,10 @@ pub enum Error {
         kind: String
     },
     /// Thrown when attempting to serialize a metric value that isn't a stdlib numeric type.
-    MetricValueMustBeNumeric,
+    #[snafu(display("unsupported metric value encountered while serializing: {}", kind))]
+    MetricValueMustBeNumeric {
+        kind: String
+    },
     /// Attempted to 'hint' that a value is a type that isn't defined in `crate::TypeHint`
     UnknownHint,
     /// Labels, when being passed to the serializer, must be in the format of `key1=val1,key2=val2`
