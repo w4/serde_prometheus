@@ -4,7 +4,7 @@
 //! for exporting metrics but this might be extended to deserialisation
 //! later on down the line.
 //!
-//! serde_prometheus will work with most metric libraries' structs out of the
+//! `serde_prometheus` will work with most metric libraries' structs out of the
 //! box, however some work may be required to get them into a format expected
 //! by Prometheus.
 //!
@@ -46,7 +46,7 @@
 //!
 //! ## Global Labels
 //!
-//! Global labels can be added to all metrics exported by serde_prometheus using
+//! Global labels can be added to all metrics exported by `serde_prometheus` using
 //! the `HashMap` passed into `serde_prometheus::to_string` for example:
 //!
 //! ```rust
@@ -121,11 +121,11 @@
 //!
 //! ## Metadata/key manipulation
 //!
-//! Serde's newtype implementation is (ab)used by serde_prometheus to add metadata
-//! to serialised fields without breaking backwards compatibility with serde_json
+//! Serde's newtype implementation is (ab)used by `serde_prometheus` to add metadata
+//! to serialised fields without breaking backwards compatibility with `serde_json`
 //! and such.
 //!
-//! For example, [serde_prometheus support has been added to metered-rs][mrsimpl]'s
+//! For example, [`serde_prometheus` support has been added to metered-rs][mrsimpl]'s
 //! histograms whilst still keeping the same JSON schema, it does this by using
 //! a call to `serialize_newtype_struct` in a struct's Serialize trait impl, the
 //! format for the type names is as follows:
@@ -310,13 +310,17 @@ where
         // get a decent estimate of the size of this output including keys.
         output: Vec::with_capacity(std::mem::size_of_val(value) * 4 * 12),
     };
-    serializer.reset_labels();
+
+    for (key, value) in &serializer.global_labels {
+        serializer.current_labels.insert(key, Cow::Borrowed(value));
+    }
+
     value.serialize(&mut serializer)?;
     Ok(String::from_utf8(serializer.output).unwrap())
 }
 
 impl<T: std::io::Write, S: std::hash::BuildHasher + Clone> Serializer<'_, T, S> {
-    fn write_key<'a>(&mut self, hint: Option<TypeHint>) -> Result<(), Error> {
+    fn write_key(&mut self, hint: Option<TypeHint>) -> Result<(), Error> {
         let path = self.path.last();
         let key = self.current_key_prefix.join("_");
 
@@ -342,15 +346,7 @@ impl<T: std::io::Write, S: std::hash::BuildHasher + Clone> Serializer<'_, T, S> 
         Ok(())
     }
 
-    fn reset_labels(&mut self) {
-        self.current_labels = HashMap::new();
-
-        for (key, value) in &self.global_labels {
-            self.current_labels.insert(key, Cow::Borrowed(value));
-        }
-    }
-
-    fn write_labels<'a>(&mut self) -> Result<(), Error> {
+    fn write_labels(&mut self) -> Result<(), Error> {
         let mut map = self.current_labels.clone();
 
         let path = if self.path.is_empty() {
