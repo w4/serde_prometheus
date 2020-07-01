@@ -1,6 +1,6 @@
 [package]
 name = "serde_prometheus"
-version = "0.1.2"
+version = "0.1.3"
 description = "serde-based serializer for prometheus' text-based exposition format"
 authors = ["Jordan Doyle <jordand@doyle.la>"]
 edition = "2018"
