@@ -147,8 +147,9 @@
 //!
 //! | Modifier     | Description |
 //! | ------------ | ----------- |
-//! | <            | Pops a value off of the `path` stack and prepends it to the name |
+//! | <            | Pops a value off of the `path` stack and appends it to the name |
 //! | !            | Pops the last value off of the `path` stack and drops it |
+//! | .            | The default behaviour of `serde_prometheus 0.1` is to append the collected stack to the next value in `path` (as if an extra `<` was added to your modifiers), to prevent this use this modifier. This has no effect in labels. This will be the default behaviour in serde_prometheus 0.2 |
 //!
 //! These can be combined and are read from left to right, for example:
 //!
@@ -285,7 +286,12 @@ struct Serializer<'a, T: std::io::Write, S: std::hash::BuildHasher> {
     path: Vec<String>,
     global_labels: HashMap<&'a str, &'a str, S>,
     current_labels: HashMap<&'a str, Cow<'a, str>>,
-    current_key_prefix: Vec<String>,
+    current_key_suffix: Vec<String>,
+    // TODO: this should be replaced with a smarter check, for example - if we've
+    //  got nested values after mutating the key, then - and only then - should the
+    //  last `path` be appended. we shouldn't be modifying keys at all if the user
+    //  has specified their intent for it.
+    dont_mutate_keys: bool,
     output: T,
 }
 
@@ -305,7 +311,8 @@ where
         path: vec![],
         global_labels,
         current_labels: HashMap::new(),
-        current_key_prefix: Vec::new(),
+        current_key_suffix: Vec::new(),
+        dont_mutate_keys: false,
         // sizeof(value) * 4 to get the size of the utf8-repr of the values then multiply by 12 to
         // get a decent estimate of the size of this output including keys.
         output: Vec::with_capacity(std::mem::size_of_val(value) * 4 * 12),
@@ -322,13 +329,13 @@ where
 impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
     fn write_key(&mut self, hint: Option<TypeHint>) -> Result<(), Error> {
         let path = self.path.last();
-        let key = self.current_key_prefix.join("_");
+        let key = self.current_key_suffix.join("_");
 
         let mut key = match path {
-            Some(path) if key != "" => format!("{}_{}", path, key),
+            Some(path) if key != "" && !self.dont_mutate_keys => format!("{}_{}", path, key),
             _ if key != "" => key,
             Some(path) => path.to_string(),
-            _ => return Err(error::Error::NoMetricName),
+            None => return Err(error::Error::NoMetricName),
         };
 
         if let Some(namespace) = self.namespace {
@@ -352,7 +359,12 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
         let path = if self.path.is_empty() {
             None
         } else {
-            Some(self.path[..self.path.len() - 1].join("/"))
+            let path_len = if self.dont_mutate_keys {
+                self.path.len()
+            } else {
+                self.path.len() - 1
+            };
+            Some(self.path[..path_len].join("/"))
         };
         if let Some(path) = path.as_ref() {
             if path != "" {
@@ -395,6 +407,9 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
                 // exclude a path from both the name and the 'path' label
                 '!' => {
                     self.path.pop();
+                }
+                '.' => {
+                    self.dont_mutate_keys = true;
                 }
                 _ => return Err(Error::InvalidModifier),
             }
@@ -452,8 +467,9 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
         };
 
         let original_path = self.path.clone();
-        let original_key_prefix = self.current_key_prefix.clone();
+        let original_key_suffix = self.current_key_suffix.clone();
         let original_labels = self.current_labels.clone();
+        let original_dont_mutate_keys = self.dont_mutate_keys;
 
         // run the label manipulation first so key manipulation applies to the path
         if let Some(label) = labels {
@@ -481,20 +497,22 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
 
                 // reset the path stack for the next set of modifiers
                 self.path = original_path.clone();
+                self.dont_mutate_keys = original_dont_mutate_keys;
             }
         }
 
         if let Some(keys) = modifiers.and_then(|v| self.map_modifiers(v).transpose()) {
             for key in keys? {
-                self.current_key_prefix.push(key);
+                self.current_key_suffix.push(key);
             }
         };
 
         value.serialize(&mut *self)?;
 
         self.path = original_path;
-        self.current_key_prefix = original_key_prefix;
+        self.current_key_suffix = original_key_suffix;
         self.current_labels = original_labels;
+        self.dont_mutate_keys = original_dont_mutate_keys;
 
         Ok(())
     }
