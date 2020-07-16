@@ -149,6 +149,7 @@
 //! | ------------ | ----------- |
 //! | <            | Pops a value off of the `path` stack and appends it to the name |
 //! | !            | Pops the last value off of the `path` stack and drops it |
+//! | -            | Moves the stack cursor back a position, when a value is popped off the stack, the position is reset back to the top of the stack |
 //! | .            | The default behaviour of `serde_prometheus 0.1` is to append the collected stack to the next value in `path` (as if an extra `<` was added to your modifiers), to prevent this use this modifier. This has no effect in labels. This will be the default behaviour in serde_prometheus 0.2 |
 //!
 //! These can be combined and are read from left to right, for example:
@@ -399,14 +400,23 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
 
         let mut key = Vec::new(); // VecDeque for push_front?
 
+        let mut to_skip = 0;
+
         for modifier in modifiers.chars() {
             match modifier {
                 // include the last appended path, ignoring excluded ones, in the key instead
                 // of the 'path' label
-                '<' => key.insert(0, self.path.pop().expect("no path to pop!!")),
+                '<' => {
+                    key.insert(0, self.path.remove(self.path.len() - 1 - to_skip));
+                    to_skip = 0;
+                },
                 // exclude a path from both the name and the 'path' label
                 '!' => {
-                    self.path.pop();
+                    self.path.remove(self.path.len() - 1 - to_skip);
+                    to_skip = 0;
+                }
+                '-' => {
+                    to_skip += 1;
                 }
                 '.' => {
                     self.dont_mutate_keys = true;
