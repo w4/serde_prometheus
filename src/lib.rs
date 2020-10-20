@@ -47,7 +47,8 @@
 //! ## Global Labels
 //!
 //! Global labels can be added to all metrics exported by `serde_prometheus` using
-//! the `HashMap` passed into `serde_prometheus::to_string` for example:
+//! the `HashMap` (or any type resolving to `IntoIterator<Borrow<(&str, &str)>>`)
+//! passed into `serde_prometheus::to_string` for example:
 //!
 //! ```rust
 //! # use std::collections::HashMap;
@@ -74,7 +75,7 @@
 //! let mut labels = HashMap::new();
 //! labels.insert("my_key", "my_value");
 //!
-//! let serialised = serde_prometheus::to_string(&metrics, None, labels)?;
+//! let serialised = serde_prometheus::to_string(&metrics, None, &[("my_key", "my_value")])?;
 //! # // deal with HashMap reordering vals
 //! # if serialised.contains("{path") {
 //! #     assert_eq!(serialised, "hit_count{path = \"my_struct\", my_key = \"my_value\"} 30\n");
@@ -150,7 +151,7 @@
 //! | <            | Pops a value off of the `path` stack and appends it to the name |
 //! | !            | Pops the last value off of the `path` stack and drops it |
 //! | -            | Moves the stack cursor back a position, when a value is popped off the stack, the position is reset back to the top of the stack |
-//! | .            | The default behaviour of `serde_prometheus 0.1` is to append the collected stack to the next value in `path` (as if an extra `<` was added to your modifiers), to prevent this use this modifier. This has no effect in labels. This will be the default behaviour in serde_prometheus 0.2 |
+//! | .            | The default behaviour of `serde_prometheus 0.1` is to append the collected stack to the next value in `path` (as if an extra `<` was added to your modifiers), to prevent this use this modifier. This has no effect in labels. This will be the default behaviour in `serde_prometheus 0.2` |
 //!
 //! These can be combined and are read from left to right, for example:
 //!
@@ -280,7 +281,7 @@ use crate::key::Serializer as KeySerializer;
 use crate::label::Serializer as LabelSerializer;
 use crate::value::Serializer as ValueSerializer;
 
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::Display;
@@ -337,10 +338,10 @@ impl Display for TypeHint {
     }
 }
 
-struct Serializer<'a, T: std::io::Write, S: std::hash::BuildHasher> {
+struct Serializer<'a, T: std::io::Write> {
     namespace: Option<&'a str>,
     path: Vec<String>,
-    global_labels: HashMap<&'a str, &'a str, S>,
+    global_labels: HashMap<&'a str, &'a str>,
     current_labels: HashMap<&'a str, Cow<'a, str>>,
     current_key_suffix: Vec<String>,
     // TODO: this should be replaced with a smarter check, for example - if we've
@@ -353,25 +354,29 @@ struct Serializer<'a, T: std::io::Write, S: std::hash::BuildHasher> {
 
 /// Outputs a `metered::MetricRegistry` in Prometheus' simple text-based exposition
 /// format.
-pub fn to_string<T, S>(
+pub fn to_string<'a, T, L, LI>(
     value: &T,
     namespace: Option<&str>,
-    global_labels: HashMap<&str, &str, S>,
+    global_labels: L,
 ) -> Result<String, Error>
 where
     T: ?Sized + Serialize,
-    S: std::hash::BuildHasher,
+    LI: Borrow<(&'a str, &'a str)>,
+    L: IntoIterator<Item = LI>,
 {
     let mut serializer = Serializer {
         namespace,
         path: vec![],
-        global_labels,
+        global_labels: global_labels
+            .into_iter()
+            .map(|v| (v.borrow().0, v.borrow().1))
+            .collect(),
         current_labels: HashMap::new(),
         current_key_suffix: Vec::new(),
         dont_mutate_keys: false,
         // sizeof(value) * 4 to get the size of the utf8-repr of the values then multiply by 12 to
         // get a decent estimate of the size of this output including keys.
-        output: Vec::with_capacity(std::mem::size_of_val(value) * 4 * 12),
+        output: Vec::with_capacity(std::mem::size_of_val(value) * 8 * 12),
     };
 
     for (key, value) in &serializer.global_labels {
@@ -382,7 +387,7 @@ where
     Ok(String::from_utf8(serializer.output).unwrap())
 }
 
-impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
+impl<T: std::io::Write> Serializer<'_, T> {
     fn write_key(&mut self, hint: Option<TypeHint>) -> Result<(), Error> {
         let path = self.path.last();
         let key = self.current_key_suffix.join("_");
@@ -488,7 +493,7 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write> serde::Serializer for &mut Serializer<'_, W> {
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Self;
@@ -814,7 +819,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
 /// Maps are most of the time histograms so we handle them a little bit differently,
 /// instead of using the key directly from the map, we modify them a little bit to
 /// make them a little bit more Prometheus-like using the `MapKeySerializer`.
-impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeMap for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write> SerializeMap for &mut Serializer<'_, W> {
     type Ok = ();
     type Error = Error;
 
@@ -840,7 +845,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeMap for &mut Seriali
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeStruct for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write> SerializeStruct for &mut Serializer<'_, W> {
     type Ok = ();
     type Error = Error;
 
@@ -860,7 +865,7 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeStruct for &mut Seri
     }
 }
 
-impl<W: std::io::Write, S: std::hash::BuildHasher> SerializeSeq for &mut Serializer<'_, W, S> {
+impl<W: std::io::Write> SerializeSeq for &mut Serializer<'_, W> {
     type Ok = ();
     type Error = Error;
 
