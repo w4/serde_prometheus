@@ -208,6 +208,61 @@
 //! # }
 //! ```
 //!
+//! ## Label concatenation
+//! By default, when added via a `serialize_newtype_struct` call, a new label added by a
+//! "deeper" value will override a previously set one set further up the stack. This can
+//! be overridden by the "deeper" value by appending `[::]` to the label name, this will
+//! concatenate the previously set label and the new label with a `::`. The `::` can be
+//! anything valid in a Prometheus label value except `=`.
+//!
+//! ```rust
+//! # use std::collections::HashMap;
+//! # use serde::{Serializer, Serialize};
+//! # fn main() -> Result<(), serde_prometheus::Error> {
+//! fn add_my_cool_key<S: serde::Serializer, T: serde::Serialize>(
+//!     value: &T,
+//!     serializer: S,
+//! ) -> Result<S::Ok, S::Error> {
+//!     serializer.serialize_newtype_struct("!|my_cool_key[::]==<", value)
+//! }
+//!
+//! #[derive(Serialize)]
+//! struct MetricRegistry {
+//!     #[serde(serialize_with = "add_my_cool_key")]
+//!     my_struct: MyStructMetrics
+//! }
+//!
+//! #[derive(Serialize)]
+//! struct MyStructMetrics {
+//!     #[serde(serialize_with = "add_my_cool_key")]
+//!     my_method: MyMethodMetrics
+//! }
+//!
+//! #[derive(Serialize)]
+//! struct MyMethodMetrics {
+//!     hit_count: HitCount
+//! }
+//! #
+//! # #[derive(Serialize)]
+//! # struct HitCount(u64);
+//!
+//! let metrics = MetricRegistry {
+//!     my_struct: MyStructMetrics {
+//!         my_method: MyMethodMetrics {
+//!             hit_count: HitCount(30)
+//!         }
+//!     }
+//! };
+//!
+//! let serialised = serde_prometheus::to_string(&metrics, None, HashMap::new())?;
+//! assert_eq!(
+//!    serialised,
+//!    "hit_count{my_cool_key = \"my_struct::my_method\"} 30\n"
+//! );
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! [serde]: https://github.com/serde-rs/serde/
 //! [mrsimpl]: https://github.com/magnet/metered-rs/commit/b6b61979a2727e3be58737015ba11eb63309ed6b
 
@@ -409,7 +464,7 @@ impl<T: std::io::Write, S: std::hash::BuildHasher> Serializer<'_, T, S> {
                 '<' => {
                     key.insert(0, self.path.remove(self.path.len() - 1 - to_skip));
                     to_skip = 0;
-                },
+                }
                 // exclude a path from both the name and the 'path' label
                 '!' => {
                     self.path.remove(self.path.len() - 1 - to_skip);
@@ -489,7 +544,21 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
                 .map(|mut v| (v.next(), v.next()));
 
             for (key, value) in pairs {
+                let mut key = key.ok_or(Error::InvalidLabel)?;
                 let value = value.ok_or(Error::InvalidLabel)?;
+
+                // a key ending with `[::]` means that we should concatenate all labels with the same
+                // name we end up with when serializing the end value with `::` as the separator
+                let mut separator = None;
+                if key.ends_with(']') {
+                    let mut split = key.splitn(2, '[');
+                    key = split.next().ok_or(Error::InvalidLabel)?;
+                    let separator_with_closing_bracket = split.next();
+
+                    if let Some(separator_wcb) = separator_with_closing_bracket {
+                        separator = Some(&separator_wcb[..separator_wcb.len() - 1]);
+                    }
+                }
 
                 // `=` is a magic char to indicate that a label value uses modifiers to get its value
                 let value = if value.starts_with('=') {
@@ -502,8 +571,16 @@ impl<W: std::io::Write, S: std::hash::BuildHasher> serde::Serializer for &mut Se
                     Cow::Borrowed(value)
                 };
 
-                self.current_labels
-                    .insert(key.ok_or(Error::InvalidLabel)?, value);
+                if let Some(separator) = separator {
+                    self.current_labels
+                        .entry(key)
+                        .and_modify(|existing| {
+                            *existing = Cow::Owned(format!("{}{}{}", existing, separator, value))
+                        })
+                        .or_insert(value);
+                } else {
+                    self.current_labels.insert(key, value);
+                }
 
                 // reset the path stack for the next set of modifiers
                 self.path = original_path.clone();
