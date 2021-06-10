@@ -282,10 +282,11 @@ use crate::label::Serializer as LabelSerializer;
 use crate::value::Serializer as ValueSerializer;
 
 use std::borrow::{Borrow, Cow};
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::Display;
 use std::str::FromStr;
+
+use indexmap::IndexMap;
 
 use serde::{
     ser::{Impossible, SerializeMap, SerializeSeq, SerializeStruct},
@@ -341,8 +342,8 @@ impl Display for TypeHint {
 struct Serializer<'a, T: std::io::Write> {
     namespace: Option<&'a str>,
     path: Vec<String>,
-    global_labels: HashMap<&'a str, &'a str>,
-    current_labels: HashMap<&'a str, Cow<'a, str>>,
+    global_labels: IndexMap<&'a str, &'a str>,
+    current_labels: IndexMap<&'a str, Cow<'a, str>>,
     current_key_suffix: Vec<String>,
     // TODO: this should be replaced with a smarter check, for example - if we've
     //  got nested values after mutating the key, then - and only then - should the
@@ -371,7 +372,7 @@ where
             .into_iter()
             .map(|v| (v.borrow().0, v.borrow().1))
             .collect(),
-        current_labels: HashMap::new(),
+        current_labels: IndexMap::new(),
         current_key_suffix: Vec::new(),
         dont_mutate_keys: false,
         // sizeof(value) * 4 to get the size of the utf8-repr of the values then multiply by 12 to
@@ -1107,12 +1108,7 @@ mod tests {
         let split: Vec<&str> = ret.split("\n").collect();
 
         assert_eq!(split[0], "hit_count{path = \"biz/bizle\"} 0");
-
-        if !split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0")
-            && !split.contains(&"throughput{path = \"biz/bizle\", quantile = \"0.95\"} 0")
-        {
-            assert!(split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0"));
-        }
+        assert!(split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0"));
     }
 
     #[test]
@@ -1140,20 +1136,7 @@ mod tests {
         .unwrap();
         let split: Vec<&str> = ret.split("\n").collect();
 
-        if split[0]
-            != "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"
-            && split[0]
-                != "global_hit_count{path = \"wrapper/biz/bizle\", service = \"my_cool_service\"} 0"
-        {
-            assert_eq!(
-                split[0],
-                "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"
-            );
-        }
-        if !split.contains(&"global_response_time_samples{path = \"wrapper/baz/bazle\", service = \"my_cool_service\"} 0")
-            && !split.contains(&"global_response_time_samples{service = \"my_cool_service\", path = \"wrapper/baz/bazle\"} 0")
-        {
-            assert!(split.contains(&"global_response_time_samples{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"));
-        }
+        assert_eq!(split[0], "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0");
+        assert!(split.contains(&"global_response_time_samples{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"));
     }
 }
