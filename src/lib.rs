@@ -1136,7 +1136,10 @@ mod tests {
         .unwrap();
         let split: Vec<&str> = ret.split("\n").collect();
 
-        assert_eq!(split[0], "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0");
+        assert_eq!(
+            split[0],
+            "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"
+        );
         assert!(split.contains(&"global_response_time_samples{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"));
     }
 }

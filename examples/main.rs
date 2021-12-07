@@ -1,7 +1,7 @@
 use metered::{metered, HitCount, ResponseTime, Throughput};
 use std::sync::Arc;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(serde::Serialize)]
 pub struct ServiceMetricRegistry<'a> {
@@ -53,6 +53,13 @@ async fn main() {
             loop {
                 let (mut stream, _) = listener.accept().await.unwrap();
 
+                let mut buf = vec![0; 1024];
+
+                let _ = match stream.read(&mut buf).await {
+                    Ok(n) => n,
+                    Err(_) => continue,
+                };
+
                 let mut globals = std::collections::HashMap::new();
                 globals.insert("service", "serde_prometheus_example");
 
@@ -71,7 +78,7 @@ async fn main() {
                     serialized.len(),
                     serialized
                 );
-                stream.write(response.as_bytes()).await.unwrap();
+                stream.write_all(response.as_bytes()).await.unwrap();
                 stream.flush().await.unwrap();
             }
         }
