@@ -1,4 +1,4 @@
-use crate::error::{Error, MetricNameMustBeUtf8};
+use crate::error::{Error, MetricNameMustBeUtf8Snafu};
 use lazy_static::lazy_static;
 use regex::Regex;
 use serde::ser::{Impossible, Serialize};
@@ -43,7 +43,7 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<W> {
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
         // convert to utf8 so we can validate the contents of the string
-        self.serialize_str(std::str::from_utf8(v).context(MetricNameMustBeUtf8)?)
+        self.serialize_str(std::str::from_utf8(v).context(MetricNameMustBeUtf8Snafu)?)
     }
 
     ///////////////////////////////////////////////////////////

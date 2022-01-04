@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 #[derive(Debug, snafu::Snafu)]
-#[snafu(visibility = "pub(crate)")]
+#[snafu(visibility(pub(crate)))]
 pub enum Error {
     /// An error thrown by the `serde::Serialize` trait on a type. This error is
     /// thrown from outside of this crate, most likely from within serde for a std
