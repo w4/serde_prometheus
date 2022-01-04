@@ -828,7 +828,7 @@ impl<W: std::io::Write> SerializeMap for &mut Serializer<'_, W> {
         let key_bytes = key.serialize(MapKeySerializer)?;
         self.path.push(
             std::str::from_utf8(key_bytes.as_bytes())
-                .context(error::MetricNameMustBeUtf8)?
+                .context(error::MetricNameMustBeUtf8Snafu)?
                 .to_owned(),
         );
 
