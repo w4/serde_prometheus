@@ -1,0 +1,47 @@
+---
+source: src/lib.rs
+expression: ret
+---
+hit_count{path = "biz/bizle"} 0
+throughput_samples{path = "biz/bizle"} 0
+throughput_min{path = "biz/bizle"} 0
+throughput_max{path = "biz/bizle"} 0
+throughput_mean{path = "biz/bizle"} 0
+throughput_stdev{path = "biz/bizle"} 0
+throughput{quantile = "0.9", path = "biz/bizle"} 0
+throughput{quantile = "0.95", path = "biz/bizle"} 0
+throughput{quantile = "0.99", path = "biz/bizle"} 0
+throughput{quantile = "0.999", path = "biz/bizle"} 0
+throughput{quantile = "0.9999", path = "biz/bizle"} 0
+response_time_samples{path = "biz/bizle"} 0
+response_time_min{path = "biz/bizle"} 0
+response_time_max{path = "biz/bizle"} 0
+response_time_mean{path = "biz/bizle"} 0
+response_time_stdev{path = "biz/bizle"} 0
+response_time{quantile = "0.9", path = "biz/bizle"} 0
+response_time{quantile = "0.95", path = "biz/bizle"} 0
+response_time{quantile = "0.99", path = "biz/bizle"} 0
+response_time{quantile = "0.999", path = "biz/bizle"} 0
+response_time{quantile = "0.9999", path = "biz/bizle"} 0
+hit_count{path = "baz/bazle"} 0
+throughput_samples{path = "baz/bazle"} 0
+throughput_min{path = "baz/bazle"} 0
+throughput_max{path = "baz/bazle"} 0
+throughput_mean{path = "baz/bazle"} 0
+throughput_stdev{path = "baz/bazle"} 0
+throughput{quantile = "0.9", path = "baz/bazle"} 0
+throughput{quantile = "0.95", path = "baz/bazle"} 0
+throughput{quantile = "0.99", path = "baz/bazle"} 0
+throughput{quantile = "0.999", path = "baz/bazle"} 0
+throughput{quantile = "0.9999", path = "baz/bazle"} 0
+response_time_samples{path = "baz/bazle"} 0
+response_time_min{path = "baz/bazle"} 0
+response_time_max{path = "baz/bazle"} 0
+response_time_mean{path = "baz/bazle"} 0
+response_time_stdev{path = "baz/bazle"} 0
+response_time{quantile = "0.9", path = "baz/bazle"} 0
+response_time{quantile = "0.95", path = "baz/bazle"} 0
+response_time{quantile = "0.99", path = "baz/bazle"} 0
+response_time{quantile = "0.999", path = "baz/bazle"} 0
+response_time{quantile = "0.9999", path = "baz/bazle"} 0
+

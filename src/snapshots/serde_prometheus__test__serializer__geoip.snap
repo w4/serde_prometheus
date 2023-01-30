@@ -1,0 +1,31 @@
+---
+source: src/lib.rs
+expression: actual
+---
+example_geoip{foo = "bar", country_code = "AA"} 0
+example_geoip{foo = "bar", country_code = "AB"} 0
+example_geoip{foo = "bar", country_code = "AC"} 0
+example_geoip{foo = "bar", country_code = "AD"} 0
+example_geoip{foo = "bar", country_code = "AE"} 0
+example_geoip{foo = "bar", country_code = "AF"} 0
+example_geoip{foo = "bar", country_code = "AG"} 0
+example_geoip{foo = "bar", country_code = "AH"} 0
+example_geoip{foo = "bar", country_code = "AI"} 0
+example_geoip{foo = "bar", country_code = "AJ"} 0
+example_geoip{foo = "bar", country_code = "AK"} 0
+example_geoip{foo = "bar", country_code = "AL"} 0
+example_geoip{foo = "bar", country_code = "AM"} 0
+example_geoip{foo = "bar", country_code = "AN"} 0
+example_geoip{foo = "bar", country_code = "AO"} 0
+example_geoip{foo = "bar", country_code = "AP"} 0
+example_geoip{foo = "bar", country_code = "AQ"} 0
+example_geoip{foo = "bar", country_code = "AR"} 0
+example_geoip{foo = "bar", country_code = "AS"} 0
+example_geoip{foo = "bar", country_code = "AT"} 0
+example_geoip{foo = "bar", country_code = "AU"} 0
+example_geoip{foo = "bar", country_code = "AV"} 0
+example_geoip{foo = "bar", country_code = "AW"} 0
+example_geoip{foo = "bar", country_code = "AX"} 0
+example_geoip{foo = "bar", country_code = "AY"} 0
+example_geoip{foo = "bar", country_code = "AZ"} 0
+

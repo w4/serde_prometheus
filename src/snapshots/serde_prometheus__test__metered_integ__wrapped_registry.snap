@@ -1,0 +1,47 @@
+---
+source: src/lib.rs
+expression: ret
+---
+global_hit_count{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_throughput_samples{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_throughput_min{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_throughput_max{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_throughput_mean{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_throughput_stdev{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.9", path = "wrapper/biz/bizle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.95", path = "wrapper/biz/bizle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.99", path = "wrapper/biz/bizle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.999", path = "wrapper/biz/bizle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.9999", path = "wrapper/biz/bizle"} 0
+global_response_time_samples{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_response_time_min{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_response_time_max{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_response_time_mean{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_response_time_stdev{service = "my_cool_service", path = "wrapper/biz/bizle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.9", path = "wrapper/biz/bizle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.95", path = "wrapper/biz/bizle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.99", path = "wrapper/biz/bizle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.999", path = "wrapper/biz/bizle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.9999", path = "wrapper/biz/bizle"} 0
+global_hit_count{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_throughput_samples{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_throughput_min{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_throughput_max{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_throughput_mean{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_throughput_stdev{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.9", path = "wrapper/baz/bazle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.95", path = "wrapper/baz/bazle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.99", path = "wrapper/baz/bazle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.999", path = "wrapper/baz/bazle"} 0
+global_throughput{service = "my_cool_service", quantile = "0.9999", path = "wrapper/baz/bazle"} 0
+global_response_time_samples{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_response_time_min{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_response_time_max{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_response_time_mean{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_response_time_stdev{service = "my_cool_service", path = "wrapper/baz/bazle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.9", path = "wrapper/baz/bazle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.95", path = "wrapper/baz/bazle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.99", path = "wrapper/baz/bazle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.999", path = "wrapper/baz/bazle"} 0
+global_response_time{service = "my_cool_service", quantile = "0.9999", path = "wrapper/baz/bazle"} 0
+

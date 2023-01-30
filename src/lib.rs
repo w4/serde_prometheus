@@ -57,17 +57,17 @@
 //! # #[derive(Serialize)]
 //! # struct HitCount(u64);
 //! #
-//! # #[derive(Serialize)]   
+//! # #[derive(Serialize)]
 //! # struct MetricRegistry {
 //! #     my_struct: MyStructMetrics
 //! # }
 //! #
-//! # #[derive(Serialize)]    
+//! # #[derive(Serialize)]
 //! # struct MyStructMetrics {
 //! #     hit_count: HitCount
 //! # }
 //! #
-//! # let metrics = MetricRegistry {  
+//! # let metrics = MetricRegistry {
 //! #     my_struct: MyStructMetrics {
 //! #         hit_count: HitCount(30)
 //! #     }
@@ -97,17 +97,17 @@
 //! # #[derive(Serialize)]
 //! # struct HitCount(u64);
 //! #
-//! # #[derive(Serialize)]   
+//! # #[derive(Serialize)]
 //! # struct MetricRegistry {
 //! #     my_struct: MyStructMetrics
 //! # }
-//! #  
-//! # #[derive(Serialize)]    
+//! #
+//! # #[derive(Serialize)]
 //! # struct MyStructMetrics {
 //! #     hit_count: HitCount
 //! # }
-//! #  
-//! # let metrics = MetricRegistry {  
+//! #
+//! # let metrics = MetricRegistry {
 //! #     my_struct: MyStructMetrics {
 //! #         hit_count: HitCount(30)
 //! #     }
@@ -151,7 +151,7 @@
 //! | <            | Pops a value off of the `path` stack and appends it to the name |
 //! | !            | Pops the last value off of the `path` stack and drops it |
 //! | -            | Moves the stack cursor back a position, when a value is popped off the stack, the position is reset back to the top of the stack |
-//! | .            | The default behaviour of `serde_prometheus 0.1` is to append the collected stack to the next value in `path` (as if an extra `<` was added to your modifiers), to prevent this use this modifier. This has no effect in labels. This will be the default behaviour in `serde_prometheus 0.2` |
+//! | .            | The default behaviour of `serde_prometheus 0.1` is to append the collected stack to the next value in `path` (as if an extra `<` was added to your modifiers), to prevent this use this modifier. This has no effect in labels. |
 //!
 //! These can be combined and are read from left to right, for example:
 //!
@@ -164,7 +164,7 @@
 //! #     my_struct: MyStructMetrics
 //! # }
 //! #
-//! # #[derive(Serialize)]    
+//! # #[derive(Serialize)]
 //! # struct MyStructMetrics {
 //! #     my_method: MyMethodMetrics
 //! # }
@@ -267,94 +267,39 @@
 //! [serde]: https://github.com/serde-rs/serde/
 //! [mrsimpl]: https://github.com/magnet/metered-rs/commit/b6b61979a2727e3be58737015ba11eb63309ed6b
 
-#![deny(clippy::all)]
-#![deny(clippy::pedantic)]
+#![deny(clippy::all, clippy::pedantic)]
+#![allow(clippy::module_name_repetitions)]
 #![allow(clippy::missing_errors_doc)]
 
 mod error;
-mod key;
-mod label;
-mod value;
+pub(crate) mod modifiers;
+pub(crate) mod util;
 
-pub use crate::error::Error;
-use crate::key::Serializer as KeySerializer;
-use crate::label::Serializer as LabelSerializer;
-use crate::value::Serializer as ValueSerializer;
-
-use std::borrow::{Borrow, Cow};
-use std::convert::TryFrom;
-use std::fmt::Display;
-use std::str::FromStr;
-
-use indexmap::IndexMap;
+use std::{
+    borrow::Borrow,
+    collections::{hash_map::Entry, HashMap},
+    fmt::Display,
+    io::Write,
+};
 
 use serde::{
     ser::{Impossible, SerializeMap, SerializeSeq, SerializeStruct},
     Serialize,
 };
-use snafu::ResultExt;
 
-pub enum TypeHint {
-    Counter = 1337,
-    Guage = 1338,
-    Histogram = 1339,
-    Summary = 1340,
-}
-impl TryFrom<u32> for TypeHint {
-    type Error = Error;
+use crate::{
+    modifiers::{
+        apply_path_modifications, BuiltLabel, LabelBehaviour, LabelStack, LabelStackWithPath,
+        ParsedModifiersList, PathStack, MAX_ALLOWED_SUFFIX_PARTS, MAX_DEPTH,
+    },
+    util::CowArcStr,
+};
 
-    fn try_from(x: u32) -> Result<Self, Self::Error> {
-        match x {
-            x if x == TypeHint::Counter as u32 => Ok(TypeHint::Counter),
-            x if x == TypeHint::Guage as u32 => Ok(TypeHint::Guage),
-            x if x == TypeHint::Histogram as u32 => Ok(TypeHint::Histogram),
-            x if x == TypeHint::Summary as u32 => Ok(TypeHint::Summary),
-            _ => Err(Error::UnsupportedValue {
-                kind: "TypeHint".to_string(),
-            }),
-        }
-    }
-}
-impl FromStr for TypeHint {
-    type Err = Error;
+pub use crate::error::Error;
 
-    fn from_str(v: &str) -> std::result::Result<Self, Self::Err> {
-        match v {
-            "counter" => Ok(TypeHint::Counter),
-            "guage" => Ok(TypeHint::Guage),
-            "histogram" => Ok(TypeHint::Histogram),
-            "summary" => Ok(TypeHint::Summary),
-            _ => Err(Error::UnknownHint),
-        }
-    }
-}
-impl Display for TypeHint {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            TypeHint::Counter => "counter",
-            TypeHint::Guage => "guage",
-            TypeHint::Histogram => "histogram",
-            TypeHint::Summary => "summary",
-        })
-    }
-}
-
-struct Serializer<'a, T: std::io::Write> {
-    namespace: Option<&'a str>,
-    path: Vec<String>,
-    global_labels: IndexMap<&'a str, &'a str>,
-    current_labels: IndexMap<&'a str, Cow<'a, str>>,
-    current_key_suffix: Vec<String>,
-    // TODO: this should be replaced with a smarter check, for example - if we've
-    //  got nested values after mutating the key, then - and only then - should the
-    //  last `path` be appended. we shouldn't be modifying keys at all if the user
-    //  has specified their intent for it.
-    dont_mutate_keys: bool,
-    output: T,
-}
-
-/// Outputs a `metered::MetricRegistry` in Prometheus' simple text-based exposition
+/// Builds a string for a `metered::MetricRegistry` in Prometheus' simple text-based exposition
 /// format.
+#[inline]
 pub fn to_string<'a, T, L, LI>(
     value: &T,
     namespace: Option<&str>,
@@ -365,136 +310,142 @@ where
     LI: Borrow<(&'a str, &'a str)>,
     L: IntoIterator<Item = LI>,
 {
-    let mut serializer = Serializer {
-        namespace,
-        path: vec![],
-        global_labels: global_labels
-            .into_iter()
-            .map(|v| (v.borrow().0, v.borrow().1))
-            .collect(),
-        current_labels: IndexMap::new(),
-        current_key_suffix: Vec::new(),
-        dont_mutate_keys: false,
-        // sizeof(value) * 4 to get the size of the utf8-repr of the values then multiply by 12 to
-        // get a decent estimate of the size of this output including keys.
-        output: Vec::with_capacity(std::mem::size_of_val(value) * 8 * 12),
-    };
+    let mut output = Vec::with_capacity(std::mem::size_of_val(value) * 8 * 12);
 
-    for (key, value) in &serializer.global_labels {
-        serializer.current_labels.insert(key, Cow::Borrowed(value));
-    }
+    write(&mut output, value, namespace, global_labels)?;
+
+    Ok(String::from_utf8(output)?)
+}
+
+/// Outputs a `metered::MetricRegistry` in Prometheus' simple text-based exposition
+/// format.
+#[inline]
+pub fn write<'a, T, L, LI, W: Write>(
+    output: &mut W,
+    value: &T,
+    namespace: Option<&str>,
+    global_labels: L,
+) -> Result<(), Error>
+where
+    T: ?Sized + Serialize,
+    LI: Borrow<(&'a str, &'a str)>,
+    L: IntoIterator<Item = LI>,
+{
+    let mut serializer = Serializer::new(output, namespace);
+
+    // consume the first label position and fill it with our global labels, these can
+    // be overridden or appended to as `serialize_newtype_struct` likes
+    serializer.labels.push(global_labels.into_iter().map(|v| {
+        let (key, value) = v.borrow();
+
+        Ok(BuiltLabel {
+            behaviour: LabelBehaviour::Replace,
+            key,
+            value: CowArcStr::Borrowed(value),
+        })
+    }))?;
 
     value.serialize(&mut serializer)?;
-    Ok(String::from_utf8(serializer.output).unwrap())
+
+    Ok(())
 }
 
-impl<T: std::io::Write> Serializer<'_, T> {
-    fn write_key(&mut self, hint: Option<TypeHint>) -> Result<(), Error> {
-        let path = self.path.last();
-        let key = self.current_key_suffix.join("_");
+struct Serializer<'a, W: Write> {
+    path: PathStack<'a>,
+    labels: LabelStack<'a>,
+    output: W,
+    modifier_cache: HashMap<&'a str, ParsedModifiersList<'a>>,
+    namespace: Option<&'a str>,
+    key: heapless::Vec<heapless::Vec<CowArcStr<'a>, { MAX_ALLOWED_SUFFIX_PARTS }>, 12>,
+    prevent_key_modification: bool,
+}
 
-        let mut key = match path {
-            Some(path) if key != "" && !self.dont_mutate_keys => format!("{}_{}", path, key),
-            _ if key != "" => key,
-            Some(path) => path.to_string(),
-            None => return Err(error::Error::NoMetricName),
-        };
+impl<'a, W: Write> Serializer<'a, W> {
+    #[inline]
+    pub(crate) fn new(output: W, namespace: Option<&'a str>) -> Self {
+        Self {
+            path: PathStack::default(),
+            labels: LabelStack::default(),
+            output,
+            namespace,
+            modifier_cache: HashMap::default(),
+            key: heapless::Vec::<_, MAX_ALLOWED_SUFFIX_PARTS>::default(),
+            prevent_key_modification: false,
+        }
+    }
 
+    /// Writes a value (`v`) to the output buffer.
+    ///
+    /// This will write the full:
+    ///
+    /// ```text
+    /// namespace_abc{def = "123"} 3
+    /// ```
+    ///
+    /// format, along with a new line.
+    #[inline]
+    pub fn write_value<S: Display>(&mut self, v: S) -> Result<(), Error> {
         if let Some(namespace) = self.namespace {
-            key = format!("{}_{}", namespace, key);
+            write!(self.output, "{namespace}_").map_err(Error::Write)?;
         }
 
-        if let Some(typ) = hint {
-            writeln!(self.output, "# TYPE {} {}", key, typ)?;
-        }
+        let mut prefix = "";
 
-        key.serialize(&mut KeySerializer {
-            output: &mut self.output,
-        })?;
-
-        Ok(())
-    }
-
-    fn write_labels(&mut self) -> Result<(), Error> {
-        let mut map = self.current_labels.clone();
-
-        let path = if self.path.is_empty() {
+        // a bit of carry over from serde_prometheus-0.1 for compatibility, if the
+        // `prevent_key_modification` modifier wasn't given for the current stack
+        // then serde_prometheus will attempt to temporarily pop off another value
+        // and prepends it to the name before adding it back to the stack again
+        let popped_path = if self.prevent_key_modification {
             None
+        } else if let Some(last_set_index) = self.path.last_set_index() {
+            self.path
+                .get_mut(last_set_index)
+                .and_then(Option::take)
+                .map(|v| (last_set_index, v))
         } else {
-            let path_len = if self.dont_mutate_keys {
-                self.path.len()
-            } else {
-                self.path.len() - 1
-            };
-            Some(self.path[..path_len].join("/"))
+            None
         };
-        if let Some(path) = path.as_ref() {
-            if path != "" {
-                map.insert("path", Cow::Borrowed(path));
+
+        // if a path was just popped off, then prefix it to the rest of the
+        // metric name
+        if let Some((_, path)) = &popped_path {
+            write!(self.output, "{prefix}{path}").map_err(Error::Write)?;
+            prefix = "_";
+        }
+
+        // loop over each stack entry...
+        for key_stack in &self.key {
+            // and write any keys they added to the metric name
+            for key in key_stack {
+                write!(self.output, "{prefix}{key}").map_err(Error::Write)?;
+
+                if prefix.is_empty() {
+                    prefix = "_";
+                }
             }
         }
 
-        if !map.is_empty() {
-            map.serialize(&mut LabelSerializer {
-                output: &mut self.output,
-                remaining: 0,
-            })?;
+        // combines `self.path` and `self.labels` without the temporary allocation,
+        // this will also deal either `self.path`, `self.labels` or both not having
+        // any readable values in them
+        let labels = LabelStackWithPath {
+            path_stack: &self.path,
+            label_stack: &self.labels,
+        };
+
+        // write the labels and value
+        writeln!(self.output, "{labels} {v}").map_err(Error::Write)?;
+
+        // add the path we've just removed for the metric name back into the path
+        if let Some((popped_index, popped_path)) = popped_path {
+            self.path[popped_index] = Some(popped_path);
         }
 
         Ok(())
-    }
-
-    fn write_value<V: Serialize>(&mut self, value: V) -> Result<(), Error> {
-        self.output.write_all(b" ")?;
-        value.serialize(&mut ValueSerializer {
-            output: &mut self.output,
-        })?;
-        self.output.write_all(b"\n")?;
-
-        Ok(())
-    }
-
-    fn map_modifiers(&mut self, modifiers: &str) -> Result<Option<Vec<String>>, Error> {
-        if modifiers.is_empty() {
-            return Ok(None);
-        }
-
-        let mut key = Vec::new(); // VecDeque for push_front?
-
-        let mut to_skip = 0;
-
-        for modifier in modifiers.chars() {
-            match modifier {
-                // include the last appended path, ignoring excluded ones, in the key instead
-                // of the 'path' label
-                '<' => {
-                    key.insert(0, self.path.remove(self.path.len() - 1 - to_skip));
-                    to_skip = 0;
-                }
-                // exclude a path from both the name and the 'path' label
-                '!' => {
-                    self.path.remove(self.path.len() - 1 - to_skip);
-                    to_skip = 0;
-                }
-                '-' => {
-                    to_skip += 1;
-                }
-                '.' => {
-                    self.dont_mutate_keys = true;
-                }
-                _ => return Err(Error::InvalidModifier),
-            }
-        }
-
-        if key.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(key))
-        }
     }
 }
 
-impl<W: std::io::Write> serde::Serializer for &mut Serializer<'_, W> {
+impl<W: Write> serde::Serializer for &mut Serializer<'_, W> {
     type Ok = ();
     type Error = Error;
     type SerializeSeq = Self;
@@ -505,492 +456,186 @@ impl<W: std::io::Write> serde::Serializer for &mut Serializer<'_, W> {
     type SerializeStruct = Self;
     type SerializeStructVariant = Impossible<Self::Ok, Self::Error>;
 
-    ///////////////////////////////////////////////////////////
-    // whole key/value serialisation
-    ///////////////////////////////////////////////////////////
-
-    // Unit struct means a named value containing no data.
-    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(0)
-    }
-
-    fn serialize_newtype_struct<T: ?Sized>(
-        self,
-        type_name: &'static str,
-        value: &T,
-    ) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize,
-    {
-        let (modifiers, labels) = if type_name.contains('|') {
-            let mut split = type_name.splitn(2, '|');
-            (
-                split.next().filter(|v| !v.is_empty()),
-                split.next().filter(|v| !v.is_empty()),
-            )
-        } else {
-            (
-                None,
-                Some(type_name).filter(|v| !v.is_empty() && v.contains('=')),
-            )
-        };
-
-        let original_path = self.path.clone();
-        let original_key_suffix = self.current_key_suffix.clone();
-        let original_labels = self.current_labels.clone();
-        let original_dont_mutate_keys = self.dont_mutate_keys;
-
-        // run the label manipulation first so key manipulation applies to the path
-        if let Some(label) = labels {
-            let pairs = label
-                .split(',')
-                .map(|pair| pair.splitn(2, '='))
-                .map(|mut v| (v.next(), v.next()));
-
-            for (key, value) in pairs {
-                let mut key = key.ok_or(Error::InvalidLabel)?;
-                let value = value.ok_or(Error::InvalidLabel)?;
-
-                // a key ending with `[::]` means that we should concatenate all labels with the same
-                // name we end up with when serializing the end value with `::` as the separator
-                let mut separator = None;
-                if key.ends_with(']') {
-                    let mut split = key.splitn(2, '[');
-                    key = split.next().ok_or(Error::InvalidLabel)?;
-                    let separator_with_closing_bracket = split.next();
-
-                    if let Some(separator_wcb) = separator_with_closing_bracket {
-                        separator = Some(&separator_wcb[..separator_wcb.len() - 1]);
-                    }
-                }
-
-                // `=` is a magic char to indicate that a label value uses modifiers to get its value
-                let value = if value.starts_with('=') {
-                    Cow::Owned(
-                        self.map_modifiers(&value[1..])?
-                            .map(|v| v.join("_"))
-                            .unwrap_or_default(),
-                    )
-                } else {
-                    Cow::Borrowed(value)
-                };
-
-                if let Some(separator) = separator {
-                    self.current_labels
-                        .entry(key)
-                        .and_modify(|existing| {
-                            *existing = Cow::Owned(format!("{}{}{}", existing, separator, value))
-                        })
-                        .or_insert(value);
-                } else {
-                    self.current_labels.insert(key, value);
-                }
-
-                // reset the path stack for the next set of modifiers
-                self.path = original_path.clone();
-                self.dont_mutate_keys = original_dont_mutate_keys;
-            }
-        }
-
-        if let Some(keys) = modifiers.and_then(|v| self.map_modifiers(v).transpose()) {
-            for key in keys? {
-                self.current_key_suffix.push(key);
-            }
-        };
-
-        value.serialize(&mut *self)?;
-
-        self.path = original_path;
-        self.current_key_suffix = original_key_suffix;
-        self.current_labels = original_labels;
-        self.dont_mutate_keys = original_dont_mutate_keys;
-
-        Ok(())
-    }
-
-    fn serialize_newtype_variant<T: ?Sized>(
-        self,
-        _name: &'static str,
-        _variant_index: u32,
-        _variant: &'static str,
-        value: &T,
-    ) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize,
-    {
-        value.serialize(&mut *self)
-    }
-
-    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        Ok(self)
-    }
-
-    fn serialize_struct(
-        self,
-        _name: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeStruct, Self::Error> {
-        Ok(self)
-    }
-
-    fn serialize_i8(self, value: i8) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_i16(self, value: i16) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_i32(self, value: i32) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_u16(self, value: u16) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_u32(self, value: u32) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_f32(self, value: f32) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_f64(self, value: f64) -> Result<Self::Ok, Self::Error> {
-        self.write_key(None)?;
-        self.write_labels()?;
-        self.write_value(value)?;
-        Ok(())
-    }
-
-    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        // noop
-        Ok(())
-    }
-
-    fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: Serialize,
-    {
-        value.serialize(&mut *self)?;
-        Ok(())
-    }
-
-    ///////////////////////////////////////////////////////////
-    // Unsupported key/value serialisers
-    ///////////////////////////////////////////////////////////
-
-    fn serialize_unit_variant(
-        self,
-        name: &'static str,
-        _variant_index: u32,
-        variant: &'static str,
-    ) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: format!("Unit Variant ({}::{})", name, variant),
-        })
-    }
-
-    fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        Ok(self)
-    }
-
-    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: "Tuple".to_string(),
-        })
-    }
-
-    fn serialize_tuple_struct(
-        self,
-        name: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: format!("Tuple Struct ({})", name),
-        })
-    }
-
-    fn serialize_tuple_variant(
-        self,
-        name: &'static str,
-        _variant_index: u32,
-        variant: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: format!("Tuple Variant ({}::{})", name, variant),
-        })
-    }
-
-    fn serialize_struct_variant(
-        self,
-        name: &'static str,
-        _variant_index: u32,
-        variant: &'static str,
-        _len: usize,
-    ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: format!("Struct Variant ({}::{})", name, variant),
-        })
-    }
-
-    fn collect_str<T: ?Sized>(self, _value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: Display,
-    {
-        Err(Error::UnsupportedValue {
-            kind: "collect_str".to_string(),
-        })
-    }
-
-    fn serialize_str(self, _v: &str) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: "str".to_string(),
-        })
-    }
-
-    fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: "char".to_string(),
-        })
-    }
-
-    fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: "bytes".to_string(),
-        })
-    }
-
-    fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: "bool".to_string(),
-        })
-    }
-
-    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        Err(Error::UnsupportedValue {
-            kind: "()".to_string(),
-        })
-    }
-}
-
-/// Maps are most of the time histograms so we handle them a little bit differently,
-/// instead of using the key directly from the map, we modify them a little bit to
-/// make them a little bit more Prometheus-like using the `MapKeySerializer`.
-impl<W: std::io::Write> SerializeMap for &mut Serializer<'_, W> {
-    type Ok = ();
-    type Error = Error;
-
-    fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), Self::Error> {
-        let key_bytes = key.serialize(MapKeySerializer)?;
-        self.path.push(
-            std::str::from_utf8(key_bytes.as_bytes())
-                .context(error::MetricNameMustBeUtf8)?
-                .to_owned(),
-        );
-
-        Ok(())
-    }
-
-    fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
-        value.serialize(&mut **self)?;
-        self.path.pop();
-        Ok(())
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(())
-    }
-}
-
-impl<W: std::io::Write> SerializeStruct for &mut Serializer<'_, W> {
-    type Ok = ();
-    type Error = Error;
-
-    fn serialize_field<T: ?Sized + Serialize>(
-        &mut self,
-        key: &'static str,
-        value: &T,
-    ) -> Result<(), Self::Error> {
-        self.path.push(key.to_owned());
-        value.serialize(&mut **self)?;
-        self.path.pop();
-        Ok(())
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(())
-    }
-}
-
-impl<W: std::io::Write> SerializeSeq for &mut Serializer<'_, W> {
-    type Ok = ();
-    type Error = Error;
-
-    fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Self::Error> {
-        value.serialize(&mut **self)?;
-        Ok(())
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        Ok(())
-    }
-}
-
-struct MapKeySerializer;
-impl serde::Serializer for MapKeySerializer {
-    type Ok = String;
-    type Error = Error;
-
-    type SerializeSeq = Impossible<String, Error>;
-    type SerializeTuple = Impossible<String, Error>;
-    type SerializeTupleStruct = Impossible<String, Error>;
-    type SerializeTupleVariant = Impossible<String, Error>;
-    type SerializeMap = Impossible<String, Error>;
-    type SerializeStruct = Impossible<String, Error>;
-    type SerializeStructVariant = Impossible<String, Error>;
-
-    fn serialize_bool(self, _value: bool) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MapKeyMustBeString)
-    }
-
-    fn serialize_i8(self, value: i8) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_i16(self, value: i16) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_i32(self, value: i32) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_i64(self, value: i64) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_u8(self, value: u8) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_u16(self, value: u16) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_u32(self, value: u32) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_u64(self, value: u64) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_f32(self, _value: f32) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MapKeyMustBeString)
-    }
-
-    fn serialize_f64(self, _value: f64) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MapKeyMustBeString)
-    }
-
-    fn serialize_char(self, value: char) -> Result<Self::Ok, Self::Error> {
-        // A char encoded as UTF-8 takes 4 bytes at most.
-        let mut buf = [0; 4];
-        self.serialize_str(value.encode_utf8(&mut buf))
-    }
-
-    fn serialize_str(self, value: &str) -> Result<Self::Ok, Self::Error> {
-        Ok(value.to_string())
-    }
-
-    fn serialize_bytes(self, _value: &[u8]) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MapKeyMustBeString)
-    }
-
-    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MapKeyMustBeString)
-    }
-
-    fn serialize_some<T>(self, _value: &T) -> Result<Self::Ok, Self::Error>
-    where
-        T: ?Sized + Serialize,
-    {
-        Err(Error::MapKeyMustBeString)
-    }
-
-    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MapKeyMustBeString)
-    }
-
-    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
-        Err(Error::MapKeyMustBeString)
-    }
-
-    fn serialize_unit_variant(
-        self,
-        _name: &'static str,
-        _variant_index: u32,
-        variant: &'static str,
-    ) -> Result<Self::Ok, Self::Error> {
-        Ok(variant.to_string())
+    #[inline]
+    fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
+        self.write_value(u8::from(v))
     }
 
     #[inline]
-    fn serialize_newtype_struct<T>(
-        self,
-        _name: &'static str,
-        value: &T,
-    ) -> Result<Self::Ok, Self::Error>
+    fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
+        self.write_value(v)
+    }
+
+    #[inline]
+    fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
+        Err(Error::NotSupported("char"))
+    }
+
+    #[inline]
+    fn serialize_str(self, _v: &str) -> Result<Self::Ok, Self::Error> {
+        Err(Error::NotSupported("&str"))
+    }
+
+    #[inline]
+    fn serialize_bytes(self, _v: &[u8]) -> Result<Self::Ok, Self::Error> {
+        Err(Error::NotSupported("&[u8]"))
+    }
+
+    #[inline]
+    fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
+        Ok(())
+    }
+
+    #[inline]
+    fn serialize_some<T>(self, value: &T) -> Result<Self::Ok, Self::Error>
     where
         T: ?Sized + Serialize,
     {
         value.serialize(self)
     }
 
+    #[inline]
+    fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
+        Err(Error::NotSupported("()"))
+    }
+
+    #[inline]
+    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
+        Err(Error::NotSupported("unit struct"))
+    }
+
+    #[inline]
+    fn serialize_unit_variant(
+        self,
+        _name: &'static str,
+        _variant_index: u32,
+        _variant: &'static str,
+    ) -> Result<Self::Ok, Self::Error> {
+        Err(Error::NotSupported("unit variant"))
+    }
+
+    #[inline]
+    fn serialize_newtype_struct<T>(
+        self,
+        name: &'static str,
+        value: &T,
+    ) -> Result<Self::Ok, Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        // fetch the modifiers from the cache if the `name` has already been parsed, otherwise parse
+        // and cache it
+        let modifiers = match self.modifier_cache.entry(name) {
+            Entry::Occupied(inner) => inner.into_mut(),
+            Entry::Vacant(inner) => inner.insert(
+                ParsedModifiersList::parse(name)
+                    .map_err(|e| Error::ParseModifiers(name, e.to_string()))?
+                    .1,
+            ),
+        };
+
+        // push to the label stack if the modifiers contained new labels
+        let has_label_modifiers = !modifiers.labels.is_empty();
+        if has_label_modifiers {
+            let labels = modifiers
+                .labels
+                .iter()
+                .filter_map(|definition| definition.build_label(&self.path).transpose());
+            self.labels.push(labels)?;
+        }
+
+        // replace self.path if the modifiers had key modifiers
+        let (old_path, old_prevent_key_mod) = if modifiers.key_modifiers.is_empty() {
+            (None, None)
+        } else {
+            // take a copy of the path stack, so we can restore it later. this only contains
+            // static references or Arcs so it's relatively inexpensive
+            let mut new_path = self.path.clone();
+
+            // mutate the new path
+            let suffix = apply_path_modifications(&mut new_path, &modifiers.key_modifiers)?;
+
+            // if the caller prepended some keys, write them out to the key
+            self.key.push(suffix.names).map_err(|val| {
+                Error::TooManyKeyPushers(MAX_ALLOWED_SUFFIX_PARTS, format!("{val:?}"))
+            })?;
+
+            // swap out the current path with the one we've just mutated and return the
+            // old value so we can reset back to it later
+            (
+                Some(std::mem::replace(&mut self.path, new_path)),
+                suffix
+                    .prevent_key_modification
+                    .then(|| std::mem::replace(&mut self.prevent_key_modification, true)),
+            )
+        };
+
+        value.serialize(&mut *self)?;
+
+        // we're all done with these modifiers so lets clean up after ourselves
+        if has_label_modifiers {
+            self.labels.pop();
+        }
+
+        // if there was no path stack, there's no reason for us to reset it back
+        if let Some(old_path) = old_path {
+            self.path = old_path;
+            self.key.pop();
+        }
+
+        if let Some(old_prevent_key_mod) = old_prevent_key_mod {
+            self.prevent_key_modification = old_prevent_key_mod;
+        }
+
+        Ok(())
+    }
+
+    #[inline]
     fn serialize_newtype_variant<T>(
         self,
         _name: &'static str,
@@ -1001,25 +646,29 @@ impl serde::Serializer for MapKeySerializer {
     where
         T: ?Sized + Serialize,
     {
-        Err(Error::MapKeyMustBeString)
+        Err(Error::NotSupported("newtype variant"))
     }
 
+    #[inline]
     fn serialize_seq(self, _len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        Err(Error::MapKeyMustBeString)
+        Ok(self)
     }
 
+    #[inline]
     fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        Err(Error::MapKeyMustBeString)
+        Err(Error::NotSupported("tuple"))
     }
 
+    #[inline]
     fn serialize_tuple_struct(
         self,
         _name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        Err(Error::MapKeyMustBeString)
+        Err(Error::NotSupported("tuple struct"))
     }
 
+    #[inline]
     fn serialize_tuple_variant(
         self,
         _name: &'static str,
@@ -1027,21 +676,24 @@ impl serde::Serializer for MapKeySerializer {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        Err(Error::MapKeyMustBeString)
+        Err(Error::NotSupported("tuple variant"))
     }
 
+    #[inline]
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        Err(Error::MapKeyMustBeString)
+        Ok(self)
     }
 
+    #[inline]
     fn serialize_struct(
         self,
         _name: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        Err(Error::MapKeyMustBeString)
+        Ok(self)
     }
 
+    #[inline]
     fn serialize_struct_variant(
         self,
         _name: &'static str,
@@ -1049,94 +701,306 @@ impl serde::Serializer for MapKeySerializer {
         _variant: &'static str,
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        Err(Error::MapKeyMustBeString)
+        Err(Error::NotSupported("struct variant"))
+    }
+}
+
+impl<W: Write> SerializeStruct for &mut Serializer<'_, W> {
+    type Ok = ();
+    type Error = Error;
+
+    #[inline]
+    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.path
+            .push(key.into())
+            .map_err(|_| Error::TooManyNestedMetrics(MAX_DEPTH, key, self.path.to_string()))?;
+        value.serialize(&mut **self)?;
+        self.path.pop();
+        Ok(())
     }
 
-    fn collect_str<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
+    #[inline]
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(())
+    }
+}
+
+impl<W: Write> SerializeSeq for &mut Serializer<'_, W> {
+    type Ok = ();
+    type Error = Error;
+
+    #[inline]
+    fn serialize_element<T>(&mut self, value: &T) -> Result<(), Self::Error>
     where
-        T: Display,
+        T: ?Sized + Serialize,
     {
-        Ok(value.to_string())
+        value.serialize(&mut **self)
+    }
+
+    #[inline]
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(())
+    }
+}
+
+impl<W: Write> SerializeMap for &mut Serializer<'_, W> {
+    type Ok = ();
+    type Error = Error;
+
+    fn serialize_key<T>(&mut self, key: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        self.path
+            .push(
+                key.serialize(serde_plain::Serializer)
+                    .map_err(Error::SerializeMapKey)?
+                    .into(),
+            )
+            .map_err(|_| Error::TooManyNestedMetrics(MAX_DEPTH, "map", self.path.to_string()))?;
+        Ok(())
+    }
+
+    fn serialize_value<T>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: ?Sized + Serialize,
+    {
+        value.serialize(&mut **self)?;
+        self.path.pop();
+        Ok(())
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use metered::{metered, HitCount, ResponseTime, Throughput};
-    use std::collections::HashMap;
+mod test {
+    mod serializer {
+        use metered::HitCount;
+        use serde::Serialize;
+        use std::collections::BTreeMap;
 
-    #[derive(serde::Serialize)]
-    pub struct ServiceMetricRegistry<'a> {
-        biz: &'a BizMetrics,
-        baz: &'a BazMetrics,
-    }
+        #[test]
+        fn basic() {
+            #[derive(Serialize)]
+            pub struct Root {
+                something: Test,
+            }
 
-    #[derive(Default)]
-    pub struct Biz {
-        metrics: BizMetrics,
-    }
-    #[metered(registry = BizMetrics)]
-    impl Biz {
-        #[measure([HitCount, Throughput, ResponseTime])]
-        pub fn bizle(&self) {}
-    }
+            #[derive(Serialize)]
+            pub struct Test {
+                hello_world: Wrapper,
+            }
 
-    #[derive(Default)]
-    pub struct Baz {
-        metrics: BazMetrics,
-    }
-    #[metered(registry = BazMetrics)]
-    impl Baz {
-        #[measure([HitCount, Throughput, ResponseTime])]
-        pub fn bazle(&self) {}
-    }
+            pub struct Wrapper(bool);
 
-    #[test]
-    fn normal_registry() {
-        let biz = Biz::default();
-        let baz = Baz::default();
+            impl Serialize for Wrapper {
+                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                where
+                    S: serde::Serializer,
+                {
+                    serializer.serialize_newtype_struct("<|hello=world", &self.0)
+                }
+            }
 
-        let ret = crate::to_string(
-            &ServiceMetricRegistry {
-                biz: &biz.metrics,
-                baz: &baz.metrics,
-            },
-            None,
-            HashMap::new(),
-        )
-        .unwrap();
-        let split: Vec<&str> = ret.split("\n").collect();
+            let input = Root {
+                something: Test {
+                    hello_world: Wrapper(true),
+                },
+            };
 
-        assert_eq!(split[0], "hit_count{path = \"biz/bizle\"} 0");
-        assert!(split.contains(&"throughput{quantile = \"0.95\", path = \"biz/bizle\"} 0"));
-    }
+            #[allow(clippy::needless_borrow)]
+            let actual = crate::to_string(&input, None, &[]).unwrap();
 
-    #[test]
-    fn wrapped_registry() {
-        #[derive(serde::Serialize)]
-        pub struct MyWrapperRegistry<'a> {
-            wrapper: ServiceMetricRegistry<'a>,
+            assert_eq!(actual, "something_hello_world{hello = \"world\"} 1\n");
         }
 
-        let biz = Biz::default();
-        let baz = Baz::default();
+        #[test]
+        fn skip_key_modification() {
+            #[derive(Serialize)]
+            pub struct Root {
+                something: Test,
+            }
 
-        let mut labels = HashMap::new();
-        labels.insert("service", "my_cool_service");
-        let ret = crate::to_string(
-            &MyWrapperRegistry {
-                wrapper: ServiceMetricRegistry {
+            #[derive(Serialize)]
+            pub struct Test {
+                hello_world: Wrapper,
+            }
+
+            pub struct Wrapper(bool);
+
+            impl Serialize for Wrapper {
+                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                where
+                    S: serde::Serializer,
+                {
+                    serializer.serialize_newtype_struct("<.|hello=world", &self.0)
+                }
+            }
+
+            let input = Root {
+                something: Test {
+                    hello_world: Wrapper(true),
+                },
+            };
+
+            #[allow(clippy::needless_borrow)]
+            let actual = crate::to_string(&input, None, &[]).unwrap();
+
+            assert_eq!(
+                actual,
+                "hello_world{hello = \"world\", path = \"something\"} 1\n"
+            );
+        }
+
+        #[test]
+        fn geoip() {
+            #[derive(Debug, Default)]
+            pub struct CountryCodeCount(HitCount);
+
+            impl Serialize for CountryCodeCount {
+                fn serialize<S: serde::ser::Serializer>(
+                    &self,
+                    serializer: S,
+                ) -> Result<S::Ok, S::Error> {
+                    serializer.serialize_newtype_struct("!!<.|country_code==<", &self.0)
+                }
+            }
+
+            #[derive(Default, Serialize)]
+            struct GeoIpMetrics {
+                country_code: BTreeMap<String, CountryCodeCount>,
+            }
+
+            #[derive(Default, Serialize)]
+            struct Metrics {
+                geoip: GeoIpMetrics,
+            }
+
+            let mut metrics = Metrics::default();
+
+            for ch in 'A'..='Z' {
+                metrics
+                    .geoip
+                    .country_code
+                    .insert(format!("A{ch}"), CountryCodeCount::default());
+            }
+
+            let actual = crate::to_string(&metrics, Some("example"), [("foo", "bar")]).unwrap();
+            insta::assert_snapshot!(actual);
+        }
+    }
+
+    mod metered_integ {
+        use metered::{metered, HitCount, ResponseTime, Throughput};
+        use std::collections::HashMap;
+
+        #[derive(serde::Serialize)]
+        pub struct ServiceMetricRegistry<'a> {
+            biz: &'a BizMetrics,
+            baz: &'a BazMetrics,
+        }
+
+        #[derive(Default)]
+        pub struct Biz {
+            metrics: BizMetrics,
+        }
+
+        #[metered(registry = BizMetrics)]
+        impl Biz {
+            #[measure([HitCount, Throughput, ResponseTime])]
+            pub fn bizle(&self) {}
+        }
+
+        #[derive(Default)]
+        pub struct Baz {
+            metrics: BazMetrics,
+        }
+
+        #[metered(registry = BazMetrics)]
+        impl Baz {
+            #[measure([HitCount, Throughput, ResponseTime])]
+            pub fn bazle(&self) {}
+        }
+
+        #[test]
+        #[allow(clippy::pedantic)]
+        fn normal_registry() {
+            let biz = Biz::default();
+            let baz = Baz::default();
+
+            let ret = crate::to_string(
+                &ServiceMetricRegistry {
                     biz: &biz.metrics,
                     baz: &baz.metrics,
                 },
-            },
-            Some("global"),
-            labels,
-        )
-        .unwrap();
-        let split: Vec<&str> = ret.split("\n").collect();
+                None,
+                HashMap::new(),
+            )
+            .unwrap();
 
-        assert_eq!(split[0], "global_hit_count{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0");
-        assert!(split.contains(&"global_response_time_samples{service = \"my_cool_service\", path = \"wrapper/biz/bizle\"} 0"));
+            insta::assert_snapshot!(ret);
+        }
+
+        #[test]
+        #[allow(clippy::pedantic)]
+        fn wrapped_registry() {
+            #[derive(serde::Serialize)]
+            pub struct MyWrapperRegistry<'a> {
+                wrapper: ServiceMetricRegistry<'a>,
+            }
+
+            let biz = Biz::default();
+            let baz = Baz::default();
+
+            let mut labels = HashMap::new();
+            labels.insert("service", "my_cool_service");
+            let ret = crate::to_string(
+                &MyWrapperRegistry {
+                    wrapper: ServiceMetricRegistry {
+                        biz: &biz.metrics,
+                        baz: &baz.metrics,
+                    },
+                },
+                Some("global"),
+                labels,
+            )
+            .unwrap();
+
+            insta::assert_snapshot!(ret);
+        }
+    }
+
+    mod compat {
+        use serde::{Serialize, Serializer};
+
+        #[test]
+        fn ensure_skips_lazy_evaluated_for_01_compat() {
+            #[derive(Serialize)]
+            pub struct A {
+                b: B,
+            }
+
+            pub struct B;
+
+            impl Serialize for B {
+                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                where
+                    S: Serializer,
+                {
+                    serializer.serialize_newtype_struct("-----|", &2)
+                }
+            }
+
+            #[allow(clippy::needless_borrow)]
+            let ret = crate::to_string(&A { b: B }, Some("global"), &[]).unwrap();
+
+            assert_eq!(ret, "global_b 2\n");
+        }
     }
 }
