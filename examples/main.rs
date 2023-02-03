@@ -1,3 +1,5 @@
+#![allow(clippy::disallowed_names)]
+
 use metered::{metered, HitCount, ResponseTime, Throughput};
 use std::sync::Arc;
 
@@ -18,7 +20,7 @@ impl Biz {
     #[measure([HitCount, Throughput, ResponseTime])]
     pub async fn bizle(&self) {
         let delay = std::time::Duration::from_millis(rand::random::<u64>() % 30);
-        tokio::time::delay_for(delay).await;
+        tokio::time::sleep(delay).await;
     }
 }
 
@@ -31,7 +33,7 @@ impl Baz {
     #[measure([HitCount, Throughput, ResponseTime])]
     pub async fn bazle(&self) {
         let delay = std::time::Duration::from_millis(rand::random::<u64>() % 60);
-        tokio::time::delay_for(delay).await;
+        tokio::time::sleep(delay).await;
     }
 }
 
@@ -46,7 +48,7 @@ async fn main() {
 
         async move {
             println!("Listening on 127.0.0.1:7878");
-            let mut listener = tokio::net::TcpListener::bind("127.0.0.1:7878")
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:7878")
                 .await
                 .unwrap();
 
@@ -71,7 +73,7 @@ async fn main() {
                     serialized.len(),
                     serialized
                 );
-                stream.write(response.as_bytes()).await.unwrap();
+                stream.write_all(response.as_bytes()).await.unwrap();
                 stream.flush().await.unwrap();
             }
         }
