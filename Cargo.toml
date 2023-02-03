@@ -13,8 +13,6 @@ repository = "https://github.com/w4/serde_prometheus"
 heapless = "0.7"
 serde = "1.0"
 thiserror = "1.0"
-itoa = "1.0"
-ftoa = "0.1"
 nom = "7.1"
 serde_plain = "1.0"
 
