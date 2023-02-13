@@ -6,8 +6,8 @@ use std::{
 use heapless::{Deque, Entry, FnvIndexMap, Vec as ArrayVec};
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_until, take_while},
-    character::complete::anychar,
+    bytes::complete::{escaped, tag, take_till, take_until, take_while},
+    character::complete::{anychar, none_of},
     combinator::{map, map_parser, map_res, opt, peek},
     error::ErrorKind,
     multi::{fold_many0, separated_list0},
@@ -326,7 +326,7 @@ impl<'a> Display for LabelStack<'a> {
                 continue;
             };
 
-            write!(f, "{prefix}{k} = \"{v}\"")?;
+            write!(f, r#"{prefix}{k} = "{v}""#)?;
 
             if prefix.is_empty() {
                 prefix = ", ";
@@ -482,7 +482,7 @@ impl<'a> LabelDefinition<'a> {
             ParsedLabel::Fixed(value) => Ok(Some(BuiltLabel {
                 behaviour: self.behaviour,
                 key: self.key,
-                value: CowArcStr::Borrowed(value),
+                value: value.clone(),
             })),
         }
     }
@@ -494,7 +494,7 @@ pub enum ParsedLabel<'a> {
     /// Defers to `Modifier`s in order to build the label.
     Modifiers(ArrayVec<Modifier, MAX_ALLOWED_MODIFIERS>),
     /// A fixed-text string that should be set as the label.
-    Fixed(&'a str),
+    Fixed(CowArcStr<'a>),
 }
 
 impl<'a> ParsedLabel<'a> {
@@ -522,7 +522,30 @@ impl<'a> ParsedLabel<'a> {
     /// Parses a fixed-string label that should be used to generate the metrics label.
     #[inline]
     fn parse_fixed(input: &'a str) -> IResult<&str, Self> {
-        map(take_till(|v| v == ','), ParsedLabel::Fixed)(input)
+        let quoted = map(
+            delimited(
+                tag(r#"""#),
+                alt((escaped(none_of(r#"\""#), '\\', tag(r#"""#)), tag(""))),
+                tag(r#"""#),
+            ),
+            CowArcStr::Borrowed,
+        );
+
+        let comma_separated = map(
+            escaped(none_of(r#"\,"#), '\\', tag(",")),
+            |matched: &str| {
+                if matched.chars().any(|c| matches!(c, '"' | ',')) {
+                    // unescape commas and escape quotes, we're only going to evaluate this fixed tag
+                    // once so the two allocs here are a small price to pay as opposed to pulling in
+                    // the full regex lib
+                    CowArcStr::Owned(matched.replace('"', r#"\""#).replace(r#"\,"#, ",").into())
+                } else {
+                    CowArcStr::Borrowed(matched)
+                }
+            },
+        );
+
+        map(alt((quoted, comma_separated)), ParsedLabel::Fixed)(input)
     }
 }
 
@@ -618,7 +641,7 @@ mod test {
 
             assert_eq!(
                 label_stack_with_path.to_string(),
-                r#"{path = "test/hello"}"#
+                r#"{path = "test/hello"}"#,
             );
         }
 
@@ -658,7 +681,7 @@ mod test {
 
             assert_eq!(
                 label_stack_with_path.to_string(),
-                r#"{testLabel = "test-value", path = "test/hello"}"#
+                r#"{testLabel = "test-value", path = "test/hello"}"#,
             );
         }
     }
@@ -802,12 +825,12 @@ mod test {
                     LabelDefinition {
                         behaviour: LabelBehaviour::Replace,
                         key: "hello",
-                        value: ParsedLabel::Fixed("world"),
+                        value: ParsedLabel::Fixed("world".into()),
                     },
                     LabelDefinition {
                         behaviour: LabelBehaviour::Append("::"),
                         key: "hello",
-                        value: ParsedLabel::Fixed("test"),
+                        value: ParsedLabel::Fixed("test".into()),
                     },
                 ],
             };
@@ -845,6 +868,13 @@ mod test {
             assert_eq!(actual, expected);
         }
 
+        // No longer supported since v0.2.0, the separator is always required
+        #[test]
+        #[should_panic]
+        fn only_keys_no_separator() {
+            ParsedModifiersList::parse("!!<").unwrap();
+        }
+
         #[test]
         fn only_labels() {
             let (rest, actual) = ParsedModifiersList::parse("|hello=world,other==!<").unwrap();
@@ -855,7 +885,7 @@ mod test {
                     LabelDefinition {
                         behaviour: LabelBehaviour::Replace,
                         key: "hello",
-                        value: ParsedLabel::Fixed("world"),
+                        value: ParsedLabel::Fixed("world".into()),
                     },
                     LabelDefinition {
                         behaviour: LabelBehaviour::Replace,
@@ -864,6 +894,39 @@ mod test {
                             Modifier::Exclude,
                             Modifier::Prepend
                         ]),
+                    },
+                ],
+            };
+
+            // ensure the whole input was consumed
+            assert_eq!(rest, "");
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn quoted_labels() {
+            let (rest, actual) = ParsedModifiersList::parse(
+                r#"|version="1.2.3(\"crusty, crustacean\")",version2=1.2.3("crusty\, crustacean"),build=123"#,
+            )
+            .unwrap();
+
+            let expected = ParsedModifiersList {
+                key_modifiers: array_vec![],
+                labels: vec![
+                    LabelDefinition {
+                        behaviour: LabelBehaviour::Replace,
+                        key: "version",
+                        value: ParsedLabel::Fixed(r#"1.2.3(\"crusty, crustacean\")"#.into()),
+                    },
+                    LabelDefinition {
+                        behaviour: LabelBehaviour::Replace,
+                        key: "version2",
+                        value: ParsedLabel::Fixed(r#"1.2.3(\"crusty, crustacean\")"#.into()),
+                    },
+                    LabelDefinition {
+                        behaviour: LabelBehaviour::Replace,
+                        key: "build",
+                        value: ParsedLabel::Fixed(r#"123"#.into()),
                     },
                 ],
             };

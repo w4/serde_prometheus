@@ -6,7 +6,7 @@ use std::{
 
 /// A slight optimisation to `Cow`, which stores the "owned" version of a string as an
 /// `Arc<str>` so cloning is less expensive.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub enum CowArcStr<'a> {
     Borrowed(&'a str),
     Owned(Arc<str>),
@@ -21,6 +21,13 @@ impl Deref for CowArcStr<'_> {
             CowArcStr::Borrowed(v) => v,
             CowArcStr::Owned(v) => v.as_ref(),
         }
+    }
+}
+
+impl PartialEq for CowArcStr<'_> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
     }
 }
 

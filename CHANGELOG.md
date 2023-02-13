@@ -1,3 +1,22 @@
+# v0.2.1
+
+This includes a fix for a small regression in v0.2.0 causing quotes not
+to be escaped inside fixed labels, significantly improving the ergonomics
+of labels in the process.
+
+There's now two types of fixed labels, "quoted" and "unquoted" - the
+"quoted" variant works as you'd expect, allowing any characters within
+the boundaries of the quotes, and allows escaping quotes using the `\`
+control character.
+
+"Unquoted" labels will continue working as-is, but also allow escaping
+the `,` delimiter used within labels.
+
+```
+|version="1.2.3(\"crusty, crustacean\")",build=123 -> {version = "1.2.3(\"crusty, crustacean\"), build = "123"}
+|version=1.2.3("crusty\, crustacean"),build=123    -> {version = "1.2.3(\"crusty, crustacean\"), build = "123"}
+```
+
 # v0.2.0
 
 This change brings a major revamp in the internal parsing and state
