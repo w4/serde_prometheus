@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use heapless::{Deque, Entry, FnvIndexMap, Vec as ArrayVec};
+use heapless::{Deque, FnvIndexMap, Vec as ArrayVec};
 use nom::{
     branch::alt,
     bytes::complete::{escaped, tag, take_till, take_until, take_while},
@@ -258,13 +258,15 @@ impl<'a> LabelStack<'a> {
         for label in new {
             let mut label = label?;
 
-            // grab the label's stack by name, creating it if it doesn't yet exist
-            let entry = match self.stack.entry(label.key) {
-                Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => entry
-                    .insert(Default::default())
-                    .map_err(|_| Error::TooManyKeys(MAX_ALLOWED_LABELS))?,
-            };
+            // avoid using entry API until https://github.com/japaric/heapless/issues/360 is resolved
+            if !self.stack.contains_key(label.key) {
+                self.stack
+                    .insert(label.key, Default::default())
+                    .map_err(|_| Error::TooManyKeys(MAX_ALLOWED_LABELS))?;
+            }
+
+            // SAFETY: we insert immediately before if the key was not present
+            let entry = self.stack.get_mut(label.key).unwrap();
 
             match label.behaviour {
                 LabelBehaviour::Replace => {}
