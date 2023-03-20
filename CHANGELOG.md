@@ -1,3 +1,11 @@
+# v0.2.2
+
+This includes a workaround for a bug in `heapless` which causes an
+incorrect entry to be returned when using the entry API which under
+some circumstances causes label values to be written to the incorrect
+key (#6). Thanks @shaunbennett for the thorough investigation and
+contribution.
+
 # v0.2.1
 
 This includes a fix for a small regression in v0.2.0 causing quotes not
