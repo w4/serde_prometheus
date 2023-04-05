@@ -222,7 +222,47 @@ impl Display for LabelStackWithPath<'_> {
 
 pub type LabelName<'a> = &'a str;
 pub type HighestSetValue = Option<usize>;
-pub type LabelValuesByOffset<'a> = [Option<CowArcStr<'a>>; MAX_ALLOWED_LABEL_OVERRIDES];
+pub type LabelValuesByOffset<'a> = [Option<LabelKind<'a>>; MAX_ALLOWED_LABEL_OVERRIDES];
+
+#[derive(Clone)]
+pub enum LabelKind<'a> {
+    Single(CowArcStr<'a>),
+    Concatenated(rpds::Queue<(&'a str, CowArcStr<'a>)>),
+}
+
+impl<'a> LabelKind<'a> {
+    pub fn push(&mut self, glue: &'a str, value: CowArcStr<'a>) {
+        // if we have a single value, we need to upgrade it to a concatenated value
+        match self {
+            LabelKind::Single(previous) => {
+                let mut inner = rpds::Queue::new();
+                inner.enqueue_mut(("", std::mem::take(previous)));
+                inner.enqueue_mut((glue, value));
+                *self = LabelKind::Concatenated(inner);
+            }
+            LabelKind::Concatenated(inner) => inner.enqueue_mut((glue, value)),
+        }
+    }
+}
+
+impl Display for LabelKind<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LabelKind::Single(v) => write!(f, "{v}"),
+            LabelKind::Concatenated(v) => {
+                for (idx, (glue, value)) in v.iter().enumerate() {
+                    if idx != 0 {
+                        write!(f, "{glue}")?;
+                    }
+
+                    write!(f, "{value}")?;
+                }
+
+                Ok(())
+            }
+        }
+    }
+}
 
 /// Labels that have been added whilst traversing each field until the current value.
 ///
@@ -256,7 +296,7 @@ impl<'a> LabelStack<'a> {
         new: impl Iterator<Item = Result<BuiltLabel<'a>, Error>>,
     ) -> Result<(), Error> {
         for label in new {
-            let mut label = label?;
+            let label = label?;
 
             // avoid using entry API until https://github.com/japaric/heapless/issues/360 is resolved
             if !self.stack.contains_key(label.key) {
@@ -268,20 +308,24 @@ impl<'a> LabelStack<'a> {
             // SAFETY: we insert immediately before if the key was not present
             let entry = self.stack.get_mut(label.key).unwrap();
 
-            match label.behaviour {
-                LabelBehaviour::Replace => {}
+            let new_label = match label.behaviour {
+                LabelBehaviour::Replace => LabelKind::Single(label.value),
                 LabelBehaviour::Append(glue) => {
-                    // grab the last set value and prepend it to our string using the glue given
-                    // by the caller
                     if let Some(previous) = entry.0.and_then(|offset| entry.1[offset].as_ref()) {
-                        label.value = format!("{previous}{glue}{}", label.value).into();
+                        // grab the last set value and prepend it to our string using the glue given
+                        // by the caller
+                        let mut new = previous.clone();
+                        new.push(glue, label.value);
+                        new
+                    } else {
+                        LabelKind::Single(label.value)
                     }
                 }
-            }
+            };
 
             // update the highest offset for this label to ours, and insert our value
             entry.0 = Some(self.current_offset);
-            entry.1[self.current_offset] = Some(label.value);
+            entry.1[self.current_offset] = Some(new_label);
         }
 
         self.current_offset += 1;
@@ -311,8 +355,8 @@ impl<'a> LabelStack<'a> {
     /// array and working its way back to the beginning.
     #[inline]
     fn next_back<'b>(
-        array: &'b [Option<CowArcStr<'b>>],
-    ) -> Option<(usize, &'b Option<CowArcStr<'b>>)> {
+        array: &'b [Option<LabelKind<'b>>],
+    ) -> Option<(usize, &'b Option<LabelKind<'b>>)> {
         array.iter().enumerate().rfind(|(_, val)| val.is_some())
     }
 }
