@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::{
     fmt::{Display, Formatter},
-    sync::Arc,
+    rc::Rc,
 };
 
 /// A slight optimisation to `Cow`, which stores the "owned" version of a string as an
@@ -9,7 +9,13 @@ use std::{
 #[derive(Debug, Clone, Eq)]
 pub enum CowArcStr<'a> {
     Borrowed(&'a str),
-    Owned(Arc<str>),
+    Owned(Rc<str>),
+}
+
+impl<'a> Default for CowArcStr<'a> {
+    fn default() -> Self {
+        Self::Borrowed("")
+    }
 }
 
 impl Deref for CowArcStr<'_> {
@@ -61,6 +67,6 @@ impl<'a> From<&'a str> for CowArcStr<'a> {
 impl From<String> for CowArcStr<'_> {
     #[inline]
     fn from(value: String) -> Self {
-        Self::Owned(Arc::from(value))
+        Self::Owned(Rc::from(value))
     }
 }
