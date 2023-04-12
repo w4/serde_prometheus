@@ -209,6 +209,22 @@
 //! # }
 //! ```
 //!
+//! ## Internal overrides
+//!
+//! `serialize_newtype_struct` supports an extra section to allow overriding of internal operations,
+//! as follows:
+//!
+//! ```txt
+//! keymodifiers|key=value,key2=value2|:internal=abc
+//! ```
+//!
+//! Internal overrides are always prefixed with a `:` to make it plainly obvious they're not labels,
+//! a list of internal overrides available for use are as follows:
+//!
+//! | Override   | Description |
+//! | ---------- | ----------- |
+//! | :namespace | Overrides the global namespace with a new value for that struct and any leaves under it |
+//!
 //! ## Label concatenation
 //! By default, when added via a `serialize_newtype_struct` call, a new label added by a
 //! "deeper" value will override a previously set one set further up the stack. This can
@@ -355,7 +371,7 @@ struct Serializer<'a, W: Write> {
     labels: LabelStack<'a>,
     output: W,
     modifier_cache: HashMap<&'a str, ParsedModifiersList<'a>>,
-    namespace: Option<&'a str>,
+    namespace: Option<CowArcStr<'a>>,
     key: heapless::Vec<heapless::Vec<CowArcStr<'a>, { MAX_ALLOWED_SUFFIX_PARTS }>, 12>,
     prevent_key_modification: bool,
 }
@@ -367,7 +383,7 @@ impl<'a, W: Write> Serializer<'a, W> {
             path: PathStack::default(),
             labels: LabelStack::default(),
             output,
-            namespace,
+            namespace: namespace.map(CowArcStr::Borrowed),
             modifier_cache: HashMap::default(),
             key: heapless::Vec::<_, MAX_ALLOWED_SUFFIX_PARTS>::default(),
             prevent_key_modification: false,
@@ -385,7 +401,7 @@ impl<'a, W: Write> Serializer<'a, W> {
     /// format, along with a new line.
     #[inline]
     pub fn write_value<S: Display>(&mut self, v: S) -> Result<(), Error> {
-        if let Some(namespace) = self.namespace {
+        if let Some(namespace) = &self.namespace {
             write!(self.output, "{namespace}_").map_err(Error::Write)?;
         }
 
@@ -579,6 +595,14 @@ impl<W: Write> serde::Serializer for &mut Serializer<'_, W> {
             ),
         };
 
+        let old_namespace = if let Some(new_namespace) = modifiers.internal.namespace.as_ref() {
+            let old_namespace = self.namespace.take();
+            self.namespace = Some(new_namespace.clone());
+            Some(old_namespace)
+        } else {
+            None
+        };
+
         // push to the label stack if the modifiers contained new labels
         let has_label_modifiers = !modifiers.labels.is_empty();
         if has_label_modifiers {
@@ -630,6 +654,10 @@ impl<W: Write> serde::Serializer for &mut Serializer<'_, W> {
 
         if let Some(old_prevent_key_mod) = old_prevent_key_mod {
             self.prevent_key_modification = old_prevent_key_mod;
+        }
+
+        if let Some(old_namespace) = old_namespace {
+            self.namespace = old_namespace;
         }
 
         Ok(())
@@ -892,6 +920,48 @@ mod test {
             }
 
             let actual = crate::to_string(&metrics, Some("example"), [("foo", "bar")]).unwrap();
+            insta::assert_snapshot!(actual);
+        }
+    }
+
+    mod namespace {
+        use serde::Serialize;
+
+        #[test]
+        fn override_works() {
+            #[derive(Serialize)]
+            pub struct Root {
+                something: Test,
+            }
+
+            #[derive(Serialize)]
+            pub struct Test {
+                hello_world: Wrapper,
+                something_else: bool,
+            }
+
+            pub struct Wrapper(bool);
+
+            impl Serialize for Wrapper {
+                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                where
+                    S: serde::Serializer,
+                {
+                    serializer
+                        .serialize_newtype_struct("<|hello=\"world\"|:namespace=override", &self.0)
+                }
+            }
+
+            let input = Root {
+                something: Test {
+                    hello_world: Wrapper(true),
+                    something_else: true,
+                },
+            };
+
+            #[allow(clippy::needless_borrow)]
+            let actual = crate::to_string(&input, Some("hello_world"), &[]).unwrap();
+
             insta::assert_snapshot!(actual);
         }
     }

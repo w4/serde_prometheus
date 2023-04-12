@@ -1,0 +1,7 @@
+---
+source: src/lib.rs
+expression: actual
+---
+override_something_hello_world{hello = "world"} 1
+hello_world_something_else{path = "something"} 1
+

@@ -30,6 +30,8 @@ pub enum Error {
     SerializeMapKey(serde_plain::Error),
     #[error("too many unique keys exist (maximum {0})")]
     TooManyKeys(usize),
+    #[error("internal modifier unknown: {0}")]
+    UnknownInternalModifier(String),
 }
 
 impl serde::ser::Error for Error {
