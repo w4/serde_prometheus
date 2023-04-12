@@ -1,6 +1,7 @@
 use std::{
     fmt::{Debug, Display, Formatter, Write},
     ops::{Deref, DerefMut},
+    str::FromStr,
 };
 
 use heapless::{Deque, FnvIndexMap, Vec as ArrayVec};
@@ -8,7 +9,7 @@ use nom::{
     branch::alt,
     bytes::complete::{escaped, tag, take_till, take_until, take_while},
     character::complete::{anychar, none_of},
-    combinator::{map, map_parser, map_res, opt, peek},
+    combinator::{cut, map, map_parser, map_res, opt, peek},
     error::ErrorKind,
     multi::{fold_many0, separated_list0},
     sequence::{delimited, preceded, separated_pair, terminated},
@@ -345,6 +346,7 @@ impl<'a> Display for LabelStack<'a> {
 pub struct ParsedModifiersList<'a> {
     pub key_modifiers: ArrayVec<Modifier, MAX_ALLOWED_MODIFIERS>,
     pub labels: Vec<LabelDefinition<'a>>,
+    pub internal: InternalModifiers<'a>,
 }
 
 impl<'a> ParsedModifiersList<'a> {
@@ -352,7 +354,7 @@ impl<'a> ParsedModifiersList<'a> {
     /// format via `serialize_newtype_struct`:
     ///
     /// ```text
-    /// !<|my_label==!<,my_other_label=test
+    /// !<|my_label==!<,my_other_label=test|:namespace=abc
     /// ```
     #[inline]
     pub fn parse(input: &'a str) -> IResult<&str, ParsedModifiersList<'a>> {
@@ -374,13 +376,72 @@ impl<'a> ParsedModifiersList<'a> {
             ),
         )(input)?;
 
+        let (input, internal) = opt(preceded(tag("|"), cut(InternalModifiers::parse)))(input)?;
+
         Ok((
             input,
             ParsedModifiersList {
                 key_modifiers,
                 labels,
+                internal: internal.unwrap_or_default(),
             },
         ))
+    }
+}
+
+/// Provides options to allow consumers to override internal state.
+#[derive(Eq, PartialEq, Debug, Default)]
+pub struct InternalModifiers<'a> {
+    /// Overrides the global namespace with a new value
+    pub namespace: Option<CowArcStr<'a>>,
+}
+
+impl<'a> InternalModifiers<'a> {
+    /// Parses a list of internal modifiers, e.g.
+    ///
+    /// ```text
+    /// :namespace=abc,:something_else="def"
+    /// ```
+    #[inline]
+    pub fn parse(input: &'a str) -> IResult<&str, Self> {
+        fold_many0(
+            separated_pair(
+                map_res(
+                    preceded(tag(":"), take_while(char::is_alphanumeric)),
+                    InternalModifierKind::from_str,
+                ),
+                tag("="),
+                parse_string,
+            ),
+            Self::default,
+            |mut acc, (k, v)| {
+                match k {
+                    InternalModifierKind::Namespace => acc.namespace = Some(v),
+                }
+
+                acc
+            },
+        )(input)
+    }
+}
+
+/// Internal parsing state for each `InternalModifiers` value to allow for returning
+/// errors early in the parsing pipeline when an invalid value is seen, since
+/// `fold_many0` is infallible.
+///
+/// See [`InternalModifiers`] for an explanation of what each modifier does.
+enum InternalModifierKind {
+    Namespace,
+}
+
+impl FromStr for InternalModifierKind {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "namespace" => Ok(Self::Namespace),
+            _ => Err(Error::UnknownInternalModifier(s.to_string())),
+        }
     }
 }
 
@@ -524,31 +585,37 @@ impl<'a> ParsedLabel<'a> {
     /// Parses a fixed-string label that should be used to generate the metrics label.
     #[inline]
     fn parse_fixed(input: &'a str) -> IResult<&str, Self> {
-        let quoted = map(
-            delimited(
-                tag(r#"""#),
-                alt((escaped(none_of(r#"\""#), '\\', tag(r#"""#)), tag(""))),
-                tag(r#"""#),
-            ),
-            CowArcStr::Borrowed,
-        );
-
-        let comma_separated = map(
-            escaped(none_of(r#"\,"#), '\\', tag(",")),
-            |matched: &str| {
-                if matched.chars().any(|c| matches!(c, '"' | ',')) {
-                    // unescape commas and escape quotes, we're only going to evaluate this fixed tag
-                    // once so the two allocs here are a small price to pay as opposed to pulling in
-                    // the full regex lib
-                    CowArcStr::Owned(matched.replace('"', r#"\""#).replace(r#"\,"#, ",").into())
-                } else {
-                    CowArcStr::Borrowed(matched)
-                }
-            },
-        );
-
-        map(alt((quoted, comma_separated)), ParsedLabel::Fixed)(input)
+        map(parse_string, ParsedLabel::Fixed)(input)
     }
+}
+
+/// Parses a string that is terminated by a comma, or a quote delimited string.
+#[inline]
+fn parse_string(input: &str) -> IResult<&str, CowArcStr<'_>> {
+    let quoted = map(
+        delimited(
+            tag(r#"""#),
+            alt((escaped(none_of(r#"\""#), '\\', tag(r#"""#)), tag(""))),
+            tag(r#"""#),
+        ),
+        CowArcStr::Borrowed,
+    );
+
+    let comma_separated = map(
+        escaped(none_of(r#"\,"#), '\\', tag(",")),
+        |matched: &str| {
+            if matched.chars().any(|c| matches!(c, '"' | ',')) {
+                // unescape commas and escape quotes, we're only going to evaluate this fixed tag
+                // once so the two allocs here are a small price to pay as opposed to pulling in
+                // the full regex lib
+                CowArcStr::Owned(matched.replace('"', r#"\""#).replace(r#"\,"#, ",").into())
+            } else {
+                CowArcStr::Borrowed(matched)
+            }
+        },
+    );
+
+    alt((quoted, comma_separated))(input)
 }
 
 /// Attempts to consume the entire input string, converting each character to a `Modifier`,
@@ -785,7 +852,8 @@ mod test {
 
     mod parse_modifiers_string {
         use crate::modifiers::{
-            LabelBehaviour, LabelDefinition, Modifier, ParsedLabel, ParsedModifiersList,
+            InternalModifiers, LabelBehaviour, LabelDefinition, Modifier, ParsedLabel,
+            ParsedModifiersList,
         };
 
         #[test]
@@ -835,6 +903,7 @@ mod test {
                         value: ParsedLabel::Fixed("test".into()),
                     },
                 ],
+                internal: Default::default(),
             };
 
             // ensure the whole input was consumed
@@ -849,6 +918,7 @@ mod test {
             let expected = ParsedModifiersList {
                 key_modifiers: array_vec![],
                 labels: vec![],
+                internal: Default::default(),
             };
 
             // ensure the whole input was consumed
@@ -863,6 +933,7 @@ mod test {
             let expected = ParsedModifiersList {
                 key_modifiers: array_vec![Modifier::Exclude, Modifier::Exclude, Modifier::Prepend],
                 labels: vec![],
+                internal: Default::default(),
             };
 
             // ensure the whole input was consumed
@@ -898,6 +969,7 @@ mod test {
                         ]),
                     },
                 ],
+                internal: Default::default(),
             };
 
             // ensure the whole input was consumed
@@ -931,6 +1003,7 @@ mod test {
                         value: ParsedLabel::Fixed(r#"123"#.into()),
                     },
                 ],
+                internal: Default::default(),
             };
 
             // ensure the whole input was consumed
@@ -945,10 +1018,41 @@ mod test {
             let expected = ParsedModifiersList {
                 key_modifiers: array_vec![],
                 labels: vec![],
+                internal: Default::default(),
             };
 
             // ensure the whole input remained unparsed
             assert_eq!(rest, "HelloWorld");
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn internal_modifiers() {
+            let (rest, actual) = ParsedModifiersList::parse("||:namespace=abc").unwrap();
+
+            let expected = ParsedModifiersList {
+                key_modifiers: Default::default(),
+                labels: vec![],
+                internal: InternalModifiers {
+                    namespace: Some("abc".into()),
+                },
+            };
+
+            assert_eq!(rest, "");
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn unknown_internal_modifiers() {
+            let (rest, actual) = ParsedModifiersList::parse("||:random=abc").unwrap();
+
+            let expected = ParsedModifiersList {
+                key_modifiers: Default::default(),
+                labels: vec![],
+                internal: InternalModifiers { namespace: None },
+            };
+
+            assert_eq!(rest, ":random=abc");
             assert_eq!(actual, expected);
         }
     }
