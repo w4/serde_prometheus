@@ -1,3 +1,16 @@
+# v0.2.3 (unreleased)
+
+This version includes the ability for consumers to override the global
+namespace by using "internal overrides", this is an extra "section" in
+the usual `serialize_newtype_struct` call:
+
+```
+x|y|:namespace=my_new_namespace
+```
+
+A small internal change to prevent unnecessary early formatting of labels
+during concatenation is also included.
+
 # v0.2.2
 
 This includes a workaround for a bug in `heapless` which causes an
