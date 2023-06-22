@@ -1,4 +1,4 @@
-# v0.2.3 (unreleased)
+# v0.2.3
 
 This version includes the ability for consumers to override the global
 namespace by using "internal overrides", this is an extra "section" in

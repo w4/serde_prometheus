@@ -340,7 +340,7 @@ impl<'a> LabelStack<'a> {
         self.current_offset = self.current_offset.saturating_sub(1);
 
         for (highest, v) in self.stack.values_mut() {
-            let cell = std::mem::replace(&mut v[self.current_offset], None);
+            let cell = v[self.current_offset].take();
 
             // there was no value for the current label on our offset, so there's no need
             // for us to reset the latest-highest-offset
@@ -947,7 +947,7 @@ mod test {
                         value: ParsedLabel::Fixed("test".into()),
                     },
                 ],
-                internal: Default::default(),
+                internal: InternalModifiers::default(),
             };
 
             // ensure the whole input was consumed
@@ -962,7 +962,7 @@ mod test {
             let expected = ParsedModifiersList {
                 key_modifiers: array_vec![],
                 labels: vec![],
-                internal: Default::default(),
+                internal: InternalModifiers::default(),
             };
 
             // ensure the whole input was consumed
@@ -977,7 +977,7 @@ mod test {
             let expected = ParsedModifiersList {
                 key_modifiers: array_vec![Modifier::Exclude, Modifier::Exclude, Modifier::Prepend],
                 labels: vec![],
-                internal: Default::default(),
+                internal: InternalModifiers::default(),
             };
 
             // ensure the whole input was consumed
@@ -1013,7 +1013,7 @@ mod test {
                         ]),
                     },
                 ],
-                internal: Default::default(),
+                internal: InternalModifiers::default(),
             };
 
             // ensure the whole input was consumed
@@ -1047,7 +1047,7 @@ mod test {
                         value: ParsedLabel::Fixed(r#"123"#.into()),
                     },
                 ],
-                internal: Default::default(),
+                internal: InternalModifiers::default(),
             };
 
             // ensure the whole input was consumed
@@ -1062,7 +1062,7 @@ mod test {
             let expected = ParsedModifiersList {
                 key_modifiers: array_vec![],
                 labels: vec![],
-                internal: Default::default(),
+                internal: InternalModifiers::default(),
             };
 
             // ensure the whole input remained unparsed
@@ -1075,7 +1075,7 @@ mod test {
             let (rest, actual) = ParsedModifiersList::parse("||:namespace=abc").unwrap();
 
             let expected = ParsedModifiersList {
-                key_modifiers: Default::default(),
+                key_modifiers: heapless::Vec::default(),
                 labels: vec![],
                 internal: InternalModifiers {
                     namespace: Some("abc".into()),
@@ -1091,7 +1091,7 @@ mod test {
             let (rest, actual) = ParsedModifiersList::parse("||:random=abc").unwrap();
 
             let expected = ParsedModifiersList {
-                key_modifiers: Default::default(),
+                key_modifiers: heapless::Vec::default(),
                 labels: vec![],
                 internal: InternalModifiers { namespace: None },
             };
