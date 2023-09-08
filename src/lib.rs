@@ -947,8 +947,10 @@ mod test {
                 where
                     S: serde::Serializer,
                 {
-                    serializer
-                        .serialize_newtype_struct("<|hello=\"world\"|:namespace=override", &self.0)
+                    serializer.serialize_newtype_struct(
+                        "<|hello=\"wor\\\"ld\"|:namespace=override",
+                        &self.0,
+                    )
                 }
             }
 

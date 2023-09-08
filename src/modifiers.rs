@@ -249,20 +249,33 @@ impl<'a> LabelKind<'a> {
 impl Display for LabelKind<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LabelKind::Single(v) => write!(f, "{v}"),
+            LabelKind::Single(v) => write_sanitized_string(f, v),
             LabelKind::Concatenated(v) => {
                 for (idx, (glue, value)) in v.iter().enumerate() {
                     if idx != 0 {
                         write!(f, "{glue}")?;
                     }
 
-                    write!(f, "{value}")?;
+                    write_sanitized_string(f, value)?;
                 }
 
                 Ok(())
             }
         }
     }
+}
+
+fn write_sanitized_string(f: &mut Formatter<'_>, s: &str) -> std::fmt::Result {
+    for c in s.chars() {
+        match c {
+            '\\' => f.write_str("\\\\")?,
+            '"' => f.write_str("\\\"")?,
+            '\n' => f.write_str("\\n")?,
+            _ => f.write_char(c)?,
+        }
+    }
+
+    Ok(())
 }
 
 /// Labels that have been added whilst traversing each field until the current value.
@@ -642,22 +655,26 @@ fn parse_string(input: &str) -> IResult<&str, CowArcStr<'_>> {
             alt((escaped(none_of(r#"\""#), '\\', tag(r#"""#)), tag(""))),
             tag(r#"""#),
         ),
-        CowArcStr::Borrowed,
-    );
-
-    let comma_separated = map(
-        escaped(none_of(r#"\,"#), '\\', tag(",")),
         |matched: &str| {
-            if matched.chars().any(|c| matches!(c, '"' | ',')) {
-                // unescape commas and escape quotes, we're only going to evaluate this fixed tag
-                // once so the two allocs here are a small price to pay as opposed to pulling in
-                // the full regex lib
-                CowArcStr::Owned(matched.replace('"', r#"\""#).replace(r#"\,"#, ",").into())
+            if matched.contains('"') {
+                // unescape quotes, we're only going to evaluate this fixed tag once so the alloc
+                // is a small price to pay as opposed to pulling in the full regex lib
+                CowArcStr::Owned(matched.replace(r#"\""#, "\"").into())
             } else {
                 CowArcStr::Borrowed(matched)
             }
         },
     );
+
+    let comma_separated = map(escaped(none_of(r"\,"), '\\', tag(",")), |matched: &str| {
+        if matched.contains(',') {
+            // unescape commas, we're only going to evaluate this fixed tag once so the alloc
+            // is a small price to pay as opposed to pulling in the full regex lib
+            CowArcStr::Owned(matched.replace(r"\,", ",").into())
+        } else {
+            CowArcStr::Borrowed(matched)
+        }
+    });
 
     alt((quoted, comma_separated))(input)
 }
@@ -892,6 +909,38 @@ mod test {
                 r#"hello = "world", something = "cool::appendsomething""#
             );
         }
+
+        #[test]
+        fn escape() {
+            let mut stack = LabelStack::default();
+
+            stack
+                .push(std::iter::once(Ok(BuiltLabel {
+                    behaviour: LabelBehaviour::Replace,
+                    key: "hello",
+                    value: "world\"!!\"".into(),
+                })))
+                .unwrap();
+            assert_eq!(stack.to_string(), r#"hello = "world\"!!\"""#);
+
+            stack
+                .push(std::iter::once(Ok(BuiltLabel {
+                    behaviour: LabelBehaviour::Replace,
+                    key: "hello",
+                    value: "world\n".into(),
+                })))
+                .unwrap();
+            assert_eq!(stack.to_string(), r#"hello = "world\n""#);
+
+            stack
+                .push(std::iter::once(Ok(BuiltLabel {
+                    behaviour: LabelBehaviour::Replace,
+                    key: "hello",
+                    value: "wor\\ld".into(),
+                })))
+                .unwrap();
+            assert_eq!(stack.to_string(), r#"hello = "wor\\ld""#);
+        }
     }
 
     mod parse_modifiers_string {
@@ -1034,12 +1083,12 @@ mod test {
                     LabelDefinition {
                         behaviour: LabelBehaviour::Replace,
                         key: "version",
-                        value: ParsedLabel::Fixed(r#"1.2.3(\"crusty, crustacean\")"#.into()),
+                        value: ParsedLabel::Fixed(r#"1.2.3("crusty, crustacean")"#.into()),
                     },
                     LabelDefinition {
                         behaviour: LabelBehaviour::Replace,
                         key: "version2",
-                        value: ParsedLabel::Fixed(r#"1.2.3(\"crusty, crustacean\")"#.into()),
+                        value: ParsedLabel::Fixed(r#"1.2.3("crusty, crustacean")"#.into()),
                     },
                     LabelDefinition {
                         behaviour: LabelBehaviour::Replace,
