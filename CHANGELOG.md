@@ -1,3 +1,9 @@
+# v0.2.4
+
+This version fixes a bug that caused labels gathered via labels not
+properly be escaped that could cause potential metric ingestion
+issues.
+
 # v0.2.3
 
 This version includes the ability for consumers to override the global
