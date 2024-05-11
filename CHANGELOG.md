@@ -1,5 +1,7 @@
 # Unreleased
 
+# v0.2.5
+
 Heapless has been upgraded to 0.8 (thanks @rursprung in #9).
 
 Fixes a bug causing internal modifiers not to be parsed after following
