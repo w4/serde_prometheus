@@ -1,3 +1,10 @@
+# Unreleased
+
+Heapless has been upgraded to 0.8 (thanks @rursprung in #9).
+
+Fixes a bug causing internal modifiers not to be parsed after following
+label modifiers (ie. `|x==<|:namespace=xyz` would fail to parse).
+
 # v0.2.4
 
 This version fixes a bug that caused labels gathered via labels not

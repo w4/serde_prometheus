@@ -533,7 +533,7 @@ pub enum Modifier {
     Exclude,
     /// Moves the stack pointer down one value.
     Skip,
-    /// Prevents serde_prometheus from modifying the metric key after the caller has written to it
+    /// Prevents `serde_prometheus` from modifying the metric key after the caller has written to it
     /// (default behaviour is to act as if another `<` was added to the modifiers)
     PreventKeyModification,
 }
@@ -633,7 +633,7 @@ impl<'a> ParsedLabel<'a> {
         map(
             preceded(
                 tag("="),
-                map_parser(take_till(|v| v == ','), take_many_modifier),
+                map_parser(take_till(|v| matches!(v, ',' | '|')), take_many_modifier),
             ),
             Self::Modifiers,
         )(input)
@@ -1126,6 +1126,67 @@ mod test {
             let expected = ParsedModifiersList {
                 key_modifiers: heapless::Vec::default(),
                 labels: vec![],
+                internal: InternalModifiers {
+                    namespace: Some("abc".into()),
+                },
+            };
+
+            assert_eq!(rest, "");
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn empty_modifiers_with_internal() {
+            let (rest, actual) = ParsedModifiersList::parse("|hello==|:namespace=abc").unwrap();
+
+            let expected = ParsedModifiersList {
+                key_modifiers: heapless::Vec::default(),
+                labels: vec![LabelDefinition {
+                    behaviour: LabelBehaviour::Replace,
+                    key: "hello",
+                    value: ParsedLabel::Modifiers(array_vec![]),
+                }],
+                internal: InternalModifiers {
+                    namespace: Some("abc".into()),
+                },
+            };
+
+            assert_eq!(rest, "");
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn modifiers_with_internal() {
+            let (rest, actual) = ParsedModifiersList::parse("|hello==<|:namespace=abc").unwrap();
+
+            let expected = ParsedModifiersList {
+                key_modifiers: heapless::Vec::default(),
+                labels: vec![LabelDefinition {
+                    behaviour: LabelBehaviour::Replace,
+                    key: "hello",
+                    value: ParsedLabel::Modifiers(array_vec![Modifier::Prepend]),
+                }],
+                internal: InternalModifiers {
+                    namespace: Some("abc".into()),
+                },
+            };
+
+            assert_eq!(rest, "");
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn fixed_modifiers_with_internal() {
+            let (rest, actual) =
+                ParsedModifiersList::parse("|hello=\"test\"|:namespace=abc").unwrap();
+
+            let expected = ParsedModifiersList {
+                key_modifiers: heapless::Vec::default(),
+                labels: vec![LabelDefinition {
+                    behaviour: LabelBehaviour::Replace,
+                    key: "hello",
+                    value: ParsedLabel::Fixed("test".into()),
+                }],
                 internal: InternalModifiers {
                     namespace: Some("abc".into()),
                 },
