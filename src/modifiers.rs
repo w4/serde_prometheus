@@ -375,6 +375,8 @@ impl<'a> LabelStack<'a> {
 
             *highest = Self::next_back(v).map(|(offset, _)| offset);
         }
+
+        self.stack.retain(|_, (highest, _)| highest.is_some());
     }
 
     /// Grabs the next available string in the array that is set, starting from the end of the
