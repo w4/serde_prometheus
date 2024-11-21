@@ -28,8 +28,8 @@ pub enum Error {
     TooManyKeyPushers(usize, String),
     #[error("failed to serialize map key to string: {0}")]
     SerializeMapKey(serde_plain::Error),
-    #[error("too many unique keys exist (maximum {0})")]
-    TooManyKeys(usize),
+    #[error("too many unique keys exist (maximum {0}), current stack {1} - attempted to push {2}")]
+    TooManyKeys(usize, String, String),
     #[error("internal modifier unknown: {0}")]
     UnknownInternalModifier(String),
 }

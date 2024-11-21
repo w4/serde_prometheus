@@ -225,7 +225,7 @@ pub type LabelName<'a> = &'a str;
 pub type HighestSetValue = Option<usize>;
 pub type LabelValuesByOffset<'a> = [Option<LabelKind<'a>>; MAX_ALLOWED_LABEL_OVERRIDES];
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum LabelKind<'a> {
     Single(CowArcStr<'a>),
     Concatenated(rpds::Queue<(&'a str, CowArcStr<'a>)>),
@@ -316,7 +316,19 @@ impl<'a> LabelStack<'a> {
             if !self.stack.contains_key(label.key) {
                 self.stack
                     .insert(label.key, Default::default())
-                    .map_err(|_| Error::TooManyKeys(MAX_ALLOWED_LABELS))?;
+                    .map_err(|_| {
+                        Error::TooManyKeys(
+                            MAX_ALLOWED_LABELS,
+                            format!(
+                                "{:?}",
+                                self.stack
+                                    .iter()
+                                    .map(|v| (v.0, v.1 .1.iter().flatten().collect::<Vec<_>>()))
+                                    .collect::<Vec<_>>()
+                            ),
+                            label.key.to_string(),
+                        )
+                    })?;
             }
 
             // SAFETY: we insert immediately before if the key was not present

@@ -849,6 +849,51 @@ mod test {
         }
 
         #[test]
+        fn overflows_labels() {
+            #[derive(Serialize)]
+            pub struct Root {
+                something: Test,
+            }
+
+            pub struct Test {
+                hello_world: Wrapper,
+            }
+
+            impl Serialize for Test {
+                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                where
+                    S: serde::Serializer,
+                {
+                    serializer.serialize_newtype_struct("|a=base", &self.hello_world)
+                }
+            }
+
+            pub struct Wrapper(bool);
+
+            impl Serialize for Wrapper {
+                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                where
+                    S: serde::Serializer,
+                {
+                    serializer.serialize_newtype_struct(
+                        "<|a[::]=1,b=2,c=3,d=4,e=5,f=6,g=7,h=8,i=9,j=10,k=12,l=12,m=13,n=14,o=15,p=16,q=17,r=18,s=19,t=20,u=21,v=22,w=23,x=24,y=25,z=26,aa=27,ab=28,ac=29,ad=30,ae=31,af=32,ag=33",
+                        &self.0,
+                    )
+                }
+            }
+
+            let input = Root {
+                something: Test {
+                    hello_world: Wrapper(true),
+                },
+            };
+
+            #[allow(clippy::needless_borrow)]
+            let actual = crate::to_string(&input, None, &[]);
+            insta::assert_snapshot!(actual.unwrap_err());
+        }
+
+        #[test]
         fn skip_key_modification() {
             #[derive(Serialize)]
             pub struct Root {
