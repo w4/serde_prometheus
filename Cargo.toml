@@ -11,7 +11,7 @@ repository = "https://github.com/w4/serde_prometheus"
 
 [dependencies]
 heapless = "0.8"
-rpds = "0.13"
+rpds = "1.1"
 serde = "1.0"
 thiserror = "1.0"
 nom = "7.1"
