@@ -1,5 +1,9 @@
 # Unreleased
 
+# v0.2.7
+
+Remove empty label stack elements to avoid imposing global label limit.
+
 # v0.2.6
 
 Add additional context when overflowing label stack.
