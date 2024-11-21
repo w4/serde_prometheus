@@ -364,19 +364,18 @@ impl<'a> LabelStack<'a> {
     pub fn pop(&mut self) {
         self.current_offset = self.current_offset.saturating_sub(1);
 
-        for (highest, v) in self.stack.values_mut() {
+        self.stack.retain(|_, (highest, v)| {
             let cell = v[self.current_offset].take();
 
             // there was no value for the current label on our offset, so there's no need
             // for us to reset the latest-highest-offset
             if cell.is_none() {
-                continue;
+                return true;
             }
 
             *highest = Self::next_back(v).map(|(offset, _)| offset);
-        }
-
-        self.stack.retain(|_, (highest, _)| highest.is_some());
+            highest.is_some()
+        });
     }
 
     /// Grabs the next available string in the array that is set, starting from the end of the
