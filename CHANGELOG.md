@@ -1,5 +1,7 @@
 # Unreleased
 
+Serialize empty tuples the same as None
+
 # v0.2.7
 
 Remove empty label stack elements to avoid imposing global label limit.

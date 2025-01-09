@@ -557,7 +557,7 @@ impl<W: Write> serde::Serializer for &mut Serializer<'_, W> {
 
     #[inline]
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        Err(Error::NotSupported("()"))
+        Ok(())
     }
 
     #[inline]
