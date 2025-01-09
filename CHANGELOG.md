@@ -1,5 +1,7 @@
 # Unreleased
 
+# v0.2.8
+
 Serialize empty tuples the same as None
 
 # v0.2.7
