@@ -388,7 +388,7 @@ impl<'a> LabelStack<'a> {
     }
 }
 
-impl<'a> Display for LabelStack<'a> {
+impl Display for LabelStack<'_> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut prefix = "";
@@ -427,7 +427,7 @@ impl<'a> ParsedModifiersList<'a> {
     /// !<|my_label==!<,my_other_label=test|:namespace=abc
     /// ```
     #[inline]
-    pub fn parse(input: &'a str) -> IResult<&str, ParsedModifiersList<'a>> {
+    pub fn parse(input: &'a str) -> IResult<&'a str, ParsedModifiersList<'a>> {
         if peek(ensure_char_is_parsable)(input).is_err() {
             return Ok((input, ParsedModifiersList::default()));
         }
@@ -473,7 +473,7 @@ impl<'a> InternalModifiers<'a> {
     /// :namespace=abc,:something_else="def"
     /// ```
     #[inline]
-    pub fn parse(input: &'a str) -> IResult<&str, Self> {
+    pub fn parse(input: &'a str) -> IResult<&'a str, Self> {
         fold_many0(
             separated_pair(
                 map_res(
@@ -634,7 +634,7 @@ impl<'a> ParsedLabel<'a> {
     /// Attempts to parse a label from `serialize_newtype_struct` using [`Self::parse_modifiers`]
     /// and then [`Self::parse_fixed`] if that fails.
     #[inline]
-    pub fn parse(input: &'a str) -> IResult<&str, Self> {
+    pub fn parse(input: &'a str) -> IResult<&'a str, Self> {
         alt((Self::parse_modifiers, Self::parse_fixed))(input)
     }
 
@@ -642,7 +642,7 @@ impl<'a> ParsedLabel<'a> {
     ///
     /// Modifiers are disambiguated from fixed inputs by an extra `=` at the start of the string.
     #[inline]
-    fn parse_modifiers(input: &'a str) -> IResult<&str, Self> {
+    fn parse_modifiers(input: &'a str) -> IResult<&'a str, Self> {
         map(
             preceded(
                 tag("="),
@@ -654,7 +654,7 @@ impl<'a> ParsedLabel<'a> {
 
     /// Parses a fixed-string label that should be used to generate the metrics label.
     #[inline]
-    fn parse_fixed(input: &'a str) -> IResult<&str, Self> {
+    fn parse_fixed(input: &'a str) -> IResult<&'a str, Self> {
         map(parse_string, ParsedLabel::Fixed)(input)
     }
 }

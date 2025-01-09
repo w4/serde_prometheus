@@ -12,7 +12,7 @@ pub enum CowArcStr<'a> {
     Owned(Rc<str>),
 }
 
-impl<'a> Default for CowArcStr<'a> {
+impl Default for CowArcStr<'_> {
     fn default() -> Self {
         Self::Borrowed("")
     }
@@ -47,7 +47,7 @@ impl PartialEq<&str> for CowArcStr<'_> {
     }
 }
 
-impl<'a> Display for CowArcStr<'a> {
+impl Display for CowArcStr<'_> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
