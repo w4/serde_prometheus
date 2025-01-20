@@ -249,14 +249,14 @@ impl<'a> LabelKind<'a> {
 impl Display for LabelKind<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            LabelKind::Single(v) => write_sanitized_string(f, v),
+            LabelKind::Single(v) => write_cow_arc_str(f, v),
             LabelKind::Concatenated(v) => {
                 for (idx, (glue, value)) in v.iter().enumerate() {
                     if idx != 0 {
-                        write!(f, "{glue}")?;
+                        f.write_str(glue)?;
                     }
 
-                    write_sanitized_string(f, value)?;
+                    write_cow_arc_str(f, value)?;
                 }
 
                 Ok(())
@@ -265,14 +265,36 @@ impl Display for LabelKind<'_> {
     }
 }
 
+#[inline]
+fn write_cow_arc_str(f: &mut Formatter<'_>, s: &CowArcStr<'_>) -> std::fmt::Result {
+    match s {
+        CowArcStr::Borrowed(s) => write_sanitized_string(f, s),
+        CowArcStr::Owned(s) => write_sanitized_string(f, s),
+        CowArcStr::SignedNumber(v) => {
+            let mut buf = itoa::Buffer::new();
+            f.write_str(buf.format(*v))
+        }
+        CowArcStr::UnsignedNumber(v) => {
+            let mut buf = itoa::Buffer::new();
+            f.write_str(buf.format(*v))
+        }
+        CowArcStr::Char(c) => sanitize_char(f, *c),
+    }
+}
+
+#[inline]
+fn sanitize_char(f: &mut Formatter<'_>, c: char) -> std::fmt::Result {
+    match c {
+        '\\' => f.write_str("\\\\"),
+        '"' => f.write_str("\\\""),
+        '\n' => f.write_str("\\n"),
+        _ => f.write_char(c),
+    }
+}
+
 fn write_sanitized_string(f: &mut Formatter<'_>, s: &str) -> std::fmt::Result {
     for c in s.chars() {
-        match c {
-            '\\' => f.write_str("\\\\")?,
-            '"' => f.write_str("\\\"")?,
-            '\n' => f.write_str("\\n")?,
-            _ => f.write_char(c)?,
-        }
+        sanitize_char(f, c)?;
     }
 
     Ok(())

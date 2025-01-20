@@ -1,5 +1,35 @@
 # Unreleased
 
+## Tuple/sequence unpacking in map keys
+
+Map keys previously used a naive `ToString` implementation to push to
+the stack which made it difficult to push multiple values into labels
+at the same time.
+
+This change allows tuples to be used as map keys, with each value
+pushed into the stack individually. As a contrived example, this
+serialize implementation will extract the tuple (A, B, C, D) into
+labels `a`, `b`, `c`, `d`:
+
+```rust
+#[derive(Default, Serialize)]
+pub struct Metrics(BTreeMap<(u8, u8, u8, u8), TakeValues<u64>>);
+
+pub struct TakeValues<T>(T);
+
+impl<T: Serialize> Serialize for TakeValues<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_newtype_struct("!!!!|a==!!!<,b==!!<,c==!<,d==<", &self.0)
+    }
+}
+````
+
+This is not a breaking change as previously serde_prometheus would
+return an error if a tuple was encountered during map key serialization.
+
 # v0.2.8
 
 Serialize empty tuples the same as None
