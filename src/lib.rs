@@ -808,6 +808,10 @@ impl<W: Write> SerializeMap for &mut Serializer<'_, W> {
 
 #[cfg(test)]
 mod test {
+    use std::collections::BTreeMap;
+
+    use serde::{ser::SerializeMap, Serialize, Serializer};
+
     mod serializer {
         use metered::HitCount;
         use serde::Serialize;
@@ -1132,5 +1136,68 @@ mod test {
 
             assert_eq!(ret, "global_b 2\n");
         }
+    }
+
+    #[test]
+    fn fake_nested_metrics() {
+        #[derive(Default)]
+        pub struct Metrics(BTreeMap<(u32, u32, u32, u32), u32>);
+
+        impl Serialize for Metrics {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: Serializer,
+            {
+                let mut map = serializer.serialize_map(Some(self.0.len()))?;
+
+                for ((a, b, c, d), v) in &self.0 {
+                    map.serialize_entry(
+                        "my_metric",
+                        &Label(
+                            "!|a==<",
+                            a,
+                            Label("!|b==<", b, Label("!|c==<", c, Label("!|d==<", d, v))),
+                        ),
+                    )?;
+                }
+
+                map.end()
+            }
+        }
+
+        struct Label<K, V>(&'static str, K, V);
+
+        impl<K: Serialize, V: Serialize> Serialize for Label<K, V> {
+            fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+                PushToStackAndSerialize(&self.1, MetricAlias(self.0, &self.2)).serialize(ser)
+            }
+        }
+
+        struct PushToStackAndSerialize<K, V>(K, V);
+
+        impl<K: Serialize, V: Serialize> Serialize for PushToStackAndSerialize<K, V> {
+            fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+                let mut map = ser.serialize_map(Some(1))?;
+                map.serialize_entry(&self.0, &self.1)?;
+                map.end()
+            }
+        }
+
+        pub struct MetricAlias<V>(&'static str, V);
+
+        impl<V: Serialize> Serialize for MetricAlias<V> {
+            fn serialize<S: Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+                ser.serialize_newtype_struct(self.0, &self.1)
+            }
+        }
+
+        let mut metric = Metrics::default();
+        metric.0.insert((0, 0, 0, 0), 123);
+        metric.0.insert((1, 2, 3, 4), 456);
+
+        #[allow(clippy::needless_borrow)]
+        let ret = crate::to_string(&metric, None, &[]).unwrap();
+
+        insta::assert_snapshot!(ret);
     }
 }
