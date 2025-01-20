@@ -1,5 +1,7 @@
 # Unreleased
 
+# v0.2.9
+
 ## Tuple/sequence unpacking in map keys
 
 Map keys previously used a naive `ToString` implementation to push to
@@ -25,7 +27,7 @@ impl<T: Serialize> Serialize for TakeValues<T> {
         serializer.serialize_newtype_struct("!!!!|a==!!!<,b==!!<,c==!<,d==<", &self.0)
     }
 }
-````
+```
 
 This is not a breaking change as previously serde_prometheus would
 return an error if a tuple was encountered during map key serialization.
